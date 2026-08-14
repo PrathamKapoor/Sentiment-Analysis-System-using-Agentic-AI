@@ -5,8 +5,8 @@ Combines every unresolved item from `pre_phase6_technical_debt.md`,
 during the Final QA / Demo Readiness pass with fixes made and priorities
 reclassified per that pass's explicit guidance (Reddit/LangGraph/local
 LLM/scheduler → P3 unless demo-required; background execution → P2, not
-P1 for this synchronous academic design; PostgreSQL stays P1 until
-actually verified). **No P0 (security/data integrity) issues are open.**
+P1 for this synchronous academic design; historical PostgreSQL verification
+debt was resolved on 2026-08-14). **No P0 (security/data integrity) issues are open.**
 
 Priority key: **P0** security/data integrity · **P1** functionality ·
 **P2** quality/performance · **P3** enhancement.
@@ -14,6 +14,15 @@ Priority key: **P0** security/data integrity · **P1** functionality ·
 ---
 
 ## Fixed during Final QA (no longer open)
+
+- **Real PostgreSQL verification** — the historical Final QA record below
+  correctly described an unverified environment at that time. It was resolved
+  on 2026-08-14 against a real local PostgreSQL 18.6 server: empty-database
+  migration `0001` through `0007`, seed idempotency, `0007 -> 0006 -> 0007`,
+  schema/constraint/index inspection, and the full PostgreSQL-backed backend
+  suite all passed. A PostgreSQL date-parameter compatibility defect found in
+  that run was fixed with regression coverage. See
+  `postgresql_verification_report.md`.
 
 - **Workflow could get stuck at `status: "running"` forever if the
   orchestrator itself raised an unexpected exception** (distinct from an
@@ -55,17 +64,8 @@ Priority key: **P0** security/data integrity · **P1** functionality ·
 
 ## P1 — Functionality
 
-1. **Real PostgreSQL has never been used, at any phase — still true after
-   this QA pass.** Docker's daemon is unreachable in this sandbox (checked
-   again this session), no `psql`/`pg_ctl` binary exists, and no Windows
-   PostgreSQL service is installed — confirmed via direct filesystem search,
-   not just the daemon check. Every migration (0001–0007) and the entire
-   209+-test suite have only ever run against SQLite. **Stays P1 until an
-   environment with real PostgreSQL actually runs the migration chain and
-   test suite — per this QA pass's own instruction, this is the one item
-   that cannot be marked resolved without that verification actually
-   happening**, and it could not happen in this sandbox. This is the single
-   most consequential open item in the entire project.
+**None currently open.** The historical PostgreSQL item was resolved on
+2026-08-14; its pre-resolution context is retained in the Fixed section.
 
 ---
 
@@ -180,9 +180,8 @@ readiness.)*
 **Nothing.** No P0 issues exist, tenant isolation/permissions/audit/
 approval gates all work (re-verified live this pass), and every feature
 degrades gracefully when something optional is unavailable (no LLM, no
-Reddit credentials, no enabled sources, no PostgreSQL). **Item 1 (real
-PostgreSQL)** is the one item worth stating verbally in any demonstration
-— everything has been validated against SQLite only.
+Reddit credentials, no enabled sources). PostgreSQL verification is complete;
+see `postgresql_verification_report.md`.
 
 ## What can safely be fixed after demonstration
 

@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 
 from app.errors.exceptions import ValidationError
 
@@ -36,6 +37,21 @@ def parse_float_param(value, name, minimum=None, maximum=None):
     return result
 
 
+def parse_date_param(value, name):
+    """Return an ISO-8601 query date as a ``date`` object or reject it.
+
+    Keeping date filters typed is required for PostgreSQL, which does not
+    implicitly compare a ``date`` column with a string parameter as SQLite
+    does.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise ValidationError(f"{name} must be a valid ISO date (YYYY-MM-DD)")
+
+
 def parse_analysis_filters(args):
     """Shared query-param parsing for the analysis GET endpoints. Every
     value is validated (never passed raw into a query) — this is also what
@@ -44,8 +60,8 @@ def parse_analysis_filters(args):
     they'd even reach it.
     """
     return {
-        "dateFrom": args.get("dateFrom") or None,
-        "dateTo": args.get("dateTo") or None,
+        "dateFrom": parse_date_param(args.get("dateFrom"), "dateFrom"),
+        "dateTo": parse_date_param(args.get("dateTo"), "dateTo"),
         "sourceId": parse_uuid_param(args.get("sourceId"), "sourceId"),
         "datasetId": parse_uuid_param(args.get("datasetId"), "datasetId"),
         "aspectId": parse_uuid_param(args.get("aspectId") or args.get("aspect_id"), "aspectId"),

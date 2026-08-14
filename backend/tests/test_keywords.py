@@ -59,6 +59,18 @@ def test_keyword_filters_work(client):
     assert "excellent" not in keywords
 
 
+def test_keyword_date_filter_rejects_invalid_date(client):
+    _, headers = owner_context(client)
+    project_id = create_project(client, headers)
+
+    resp = client.get(
+        f"/api/v1/projects/{project_id}/analysis/keywords",
+        query_string={"dateFrom": "not-a-date"},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
+
 def test_word_cloud_shape(client):
     org_id, headers = owner_context(client)
     project_id = create_project(client, headers)

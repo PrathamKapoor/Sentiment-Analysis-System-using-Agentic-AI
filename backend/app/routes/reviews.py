@@ -9,6 +9,7 @@ from app.services import review_service, sentiment_service, aspect_service
 from app.services.audit_service import log_action
 from app.schemas.analysis_schemas import CorrectSentimentSchema
 from app.utils.responses import success_response
+from app.utils.query_helpers import parse_date_param
 
 project_reviews_bp = Blueprint("project_reviews", __name__)
 reviews_bp = Blueprint("reviews", __name__)
@@ -29,8 +30,8 @@ def list_reviews(project_id):
     filters = {
         "source": request.args.get("source"),
         "rating": request.args.get("rating", type=float),
-        "dateFrom": request.args.get("dateFrom"),
-        "dateTo": request.args.get("dateTo"),
+        "dateFrom": parse_date_param(request.args.get("dateFrom"), "dateFrom"),
+        "dateTo": parse_date_param(request.args.get("dateTo"), "dateTo"),
         "search": request.args.get("search"),
         "sentiment": request.args.get("sentiment"),
     }
