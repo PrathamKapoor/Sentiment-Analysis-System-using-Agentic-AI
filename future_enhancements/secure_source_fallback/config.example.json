@@ -1,0 +1,7 @@
+{
+  "maxFallbackSources": 5,
+  "maxRetriesPerSource": 2,
+  "maxFallbackDepth": 1,
+  "maxTotalFallbackTimeSeconds": 60,
+  "sources": "Use approved, code-registered adapters only. This file must not contain credentials."
+}

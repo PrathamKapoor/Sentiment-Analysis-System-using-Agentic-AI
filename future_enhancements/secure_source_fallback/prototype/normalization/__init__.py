@@ -1,0 +1,1 @@
+"""Bounded, data-only normalization."""
