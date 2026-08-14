@@ -46,6 +46,12 @@ class ConflictError(APIError):
     message = "Resource already exists or conflicts with existing data"
 
 
+class EmailAlreadyRegisteredError(ConflictError):
+    """Safe public-registration response; never reveals password information."""
+    code = "EMAIL_ALREADY_REGISTERED"
+    message = "An account with this email already exists."
+
+
 class CollectionError(APIError):
     """Data-collection failures. `code` is always one of the stable
     COLLECTION_* taxonomy values (see app/services/collectors/errors.py) —

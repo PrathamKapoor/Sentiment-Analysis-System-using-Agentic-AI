@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { authApi } from "../services/authApi";
 import {
   setTokens, clearTokens, setActiveOrganisationId, getActiveOrganisationId,
@@ -12,6 +12,7 @@ export function AuthProvider({ children }) {
   const [activeOrganisation, setActiveOrganisation] = useState(null);
   const [permissions, setPermissions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const initialSessionCheckStarted = useRef(false);
 
   const applyLoginResult = useCallback((data) => {
     setTokens(data);
@@ -47,7 +48,8 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const token = localStorage.getItem("accessToken");
-    if (token) {
+    if (token && !initialSessionCheckStarted.current) {
+      initialSessionCheckStarted.current = true;
       loadCurrentUser();
     } else {
       setLoading(false);

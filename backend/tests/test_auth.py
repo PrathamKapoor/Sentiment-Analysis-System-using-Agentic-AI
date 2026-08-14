@@ -1,3 +1,4 @@
+from app.models import Organisation, OrganisationMember, User
 from tests.conftest import register, login, auth_header
 
 
@@ -25,7 +26,27 @@ def test_register_duplicate_email_rejected(client):
     register(client)
     resp = register(client, org_name="Another Org")
     assert resp.status_code == 409
-    assert resp.get_json()["error"]["code"] == "CONFLICT"
+    assert resp.get_json()["error"]["code"] == "EMAIL_ALREADY_REGISTERED"
+    assert resp.get_json()["error"]["message"] == "An account with this email already exists."
+
+
+def test_register_duplicate_identity_is_normalized_and_atomic(client):
+    first = register(client, email="owner@acme.test", password="Str0ngPassw0rd!")
+    assert first.status_code == 201
+    before = (User.query.count(), Organisation.query.count(), OrganisationMember.query.count())
+
+    duplicate = register(
+        client, org_name="Should Not Exist", email="  Owner@Acme.Test  ",
+        password="DifferentPass123", name="Another Name",
+    )
+
+    assert duplicate.status_code == 409
+    assert duplicate.get_json()["error"]["code"] == "EMAIL_ALREADY_REGISTERED"
+    assert (User.query.count(), Organisation.query.count(), OrganisationMember.query.count()) == before
+    assert User.query.one().email == "owner@acme.test"
+
+    login_response = login(client, email="OWNER@ACME.TEST", password="Str0ngPassw0rd!")
+    assert login_response.status_code == 200
 
 
 def test_login_success(client):

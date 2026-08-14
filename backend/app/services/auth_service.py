@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func
+
 from app.extensions import db
-from app.errors.exceptions import ConflictError, UnauthenticatedError
+from app.errors.exceptions import EmailAlreadyRegisteredError, UnauthenticatedError
 from app.models import Organisation, User, OrganisationMember, MemberRole
 from app.services.seed_service import get_built_in_role
 from app.services.audit_service import log_action
@@ -10,8 +13,8 @@ from app.services.audit_service import log_action
 def register_organisation(organisation_name, email, password, name):
     """Create the first user + their organisation + Owner membership, in one transaction."""
     email = email.strip().lower()
-    if User.query.filter_by(email=email).first():
-        raise ConflictError("Email already registered")
+    if _find_user_by_email_identity(email):
+        raise EmailAlreadyRegisteredError()
 
     owner_role = get_built_in_role("Organisation Owner")
     if owner_role is None:
@@ -45,6 +48,13 @@ def register_organisation(organisation_name, email, password, name):
         )
 
         db.session.commit()
+    except IntegrityError as exc:
+        db.session.rollback()
+        # The unique index is the final guard against simultaneous requests.
+        # Do not expose constraint/driver details to the public API.
+        if _find_user_by_email_identity(email):
+            raise EmailAlreadyRegisteredError() from exc
+        raise
     except Exception:
         db.session.rollback()
         raise
@@ -54,10 +64,15 @@ def register_organisation(organisation_name, email, password, name):
 
 def authenticate(email, password):
     email = email.strip().lower()
-    user = User.query.filter_by(email=email).first()
+    user = _find_user_by_email_identity(email)
     if user is None or user.is_deleted or not user.check_password(password):
         raise UnauthenticatedError("Invalid email or password")
     return user
+
+
+def _find_user_by_email_identity(email):
+    """Lookup is case/space-insensitive for legacy rows as well as new ones."""
+    return User.query.filter(func.lower(func.trim(User.email)) == email).first()
 
 
 def get_user_organisations(user):

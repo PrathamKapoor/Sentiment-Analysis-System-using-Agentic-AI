@@ -331,6 +331,14 @@ a, button, .card, .form-control, .form-select, .modal-content, .toast {
 /* Lamp login remains intentionally cinematic */
 .auth-layout, .auth-shell { min-height: 100vh; }
 .auth-layout { background: #050607; }
+.auth-register-panel { width: min(100% - 2rem, 460px); margin: 0 auto; padding: 2rem; color: #f8f3ea; background: rgba(17,19,21,.94); border: 1px solid rgba(255,215,158,.24); border-radius: 16px; box-shadow: 0 22px 70px rgba(0,0,0,.35); }
+.auth-register-panel h4, .auth-register-panel .form-label { color: #f8f3ea; }
+.auth-register-panel .form-label { font-size: .88rem; font-weight: 600; }
+.auth-register-panel .form-control { color: #f9f3e9; background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.2); }
+.auth-register-panel .form-control:focus { color: #fff; background: rgba(255,255,255,.09); border-color: var(--warm); box-shadow: 0 0 0 .2rem rgba(240,189,114,.15); }
+.auth-register-panel .invalid-feedback { color: #ffb4aa; }
+.auth-register-link { color: #d6d1c8; }
+.auth-register-link a { color: var(--warm-bright); font-weight: 650; }
 .lamp-login-page { min-height: 100vh; position: relative; overflow: hidden; isolation: isolate; color: #f8f3ea; background: radial-gradient(circle at 50% 12%, #17130d 0, #090a0c 31%, #040506 72%); }
 .lamp-login-page::before { content: ""; position: absolute; inset: 0; z-index: -2; background: linear-gradient(120deg, rgba(255,255,255,.02), transparent 35%, rgba(250,186,91,.05)); }
 .lamp-ambient { position: absolute; z-index: -1; top: 2%; left: 50%; width: min(100vw,900px); height: min(100vw,900px); transform: translateX(-50%); border-radius: 50%; background: radial-gradient(circle, rgba(255,205,127,.4) 0, rgba(255,178,72,.16) 20%, rgba(255,146,47,.04) 49%, transparent 72%); filter: blur(15px); opacity: 0; transition: opacity 900ms var(--ease-app), transform 1000ms var(--ease-app); pointer-events: none; }
