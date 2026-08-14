@@ -33,3 +33,18 @@ autocomplete attributes were added.
   defect was observed and no dependency upgrade was made.
 - `chrome-extension://`, coupon collection, and BHK widget messages: external
   browser-extension noise, not application defects.
+
+## BW-005 — Dataset upload permitted repeated submissions and showed no progress
+
+The upload form now uses an in-flight guard, disables file/type controls, and
+reports real Axios byte-upload progress. Identical same-project files are
+blocked by server-computed SHA-256 checksum; a failed checksum match reuses the
+failed dataset for retry rather than creating another row.
+
+## BW-006 — `critic.csv` mapping failed with generic validation text
+
+The reproduced root cause was the `grade` column's 0–100 critic scores being
+mapped to the application Rating field, whose supported range is 0–5. ISO
+dates and `publication → source` mapping were valid. Validation now reports the
+specific field/row reason, preview exposes numeric min/max statistics, and the
+UI warns before submission so Rating can be left unmapped or changed.

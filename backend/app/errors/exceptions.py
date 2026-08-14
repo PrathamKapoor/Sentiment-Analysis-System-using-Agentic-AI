@@ -46,6 +46,11 @@ class ConflictError(APIError):
     message = "Resource already exists or conflicts with existing data"
 
 
+class DatasetAlreadyUploadedError(ConflictError):
+    code = "DATASET_ALREADY_UPLOADED"
+    message = "This dataset has already been uploaded to this project."
+
+
 class EmailAlreadyRegisteredError(ConflictError):
     """Safe public-registration response; never reveals password information."""
     code = "EMAIL_ALREADY_REGISTERED"

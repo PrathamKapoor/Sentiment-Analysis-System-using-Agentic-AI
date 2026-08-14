@@ -20,6 +20,8 @@ export default function DatasetManagement() {
   const [file, setFile] = useState(null);
   const [fileType, setFileType] = useState("csv");
   const [selectedId, setSelectedId] = useState(null);
+  const [uploadState, setUploadState] = useState(null);
+  const uploadInFlight = useRef(false);
 
   const load = () => {
     datasetApi.list(projectId).then((r) => setDatasets(r.data.data.items)).catch(setError);
@@ -28,15 +30,25 @@ export default function DatasetManagement() {
 
   const onUpload = async (e) => {
     e.preventDefault();
-    if (!file) return;
+    if (!file || uploadInFlight.current) return;
+    uploadInFlight.current = true;
+    setUploadState({ stage: "Uploading", percent: 0, filename: file.name });
+    setError(null);
     try {
-      const resp = await datasetApi.upload(projectId, file, fileType);
+      const resp = await datasetApi.upload(projectId, file, fileType, (event) => {
+        if (event.total) setUploadState({ stage: "Uploading", percent: Math.round((event.loaded / event.total) * 100), filename: file.name });
+      });
+      setUploadState({ stage: "Uploaded", percent: 100, filename: file.name });
       showToast("Dataset uploaded — map its columns next");
       setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       setSelectedId(resp.data.data.datasetId);
       load();
     } catch (err) {
       setError(err);
+      setUploadState({ stage: "Failed", filename: file.name });
+    } finally {
+      uploadInFlight.current = false;
     }
   };
 
@@ -60,16 +72,24 @@ export default function DatasetManagement() {
         <form onSubmit={onUpload} className="card p-3 mb-3 d-flex flex-row gap-2 align-items-end flex-wrap">
           <div>
             <label className="form-label">File</label>
-            <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.json" className="form-control" onChange={(e) => setFile(e.target.files[0])} />
+          <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.json" className="form-control" disabled={!!uploadState && uploadInFlight.current} onChange={(e) => setFile(e.target.files[0])} />
           </div>
           <div>
             <label className="form-label">Type</label>
-            <select className="form-select" value={fileType} onChange={(e) => setFileType(e.target.value)}>
+            <select className="form-select" value={fileType} disabled={!!uploadState && uploadInFlight.current} onChange={(e) => setFileType(e.target.value)}>
               {FILE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
-          <button className="btn btn-primary" type="submit" disabled={!file}>Upload</button>
+          <button className="btn btn-primary" type="submit" disabled={!file || uploadInFlight.current}>{uploadInFlight.current ? "Uploading…" : "Upload"}</button>
         </form>
+        {uploadState && uploadInFlight.current && (
+          <div className="dataset-progress card p-3 mb-3" role="status" aria-live="polite">
+            <div className="d-flex justify-content-between"><strong>{uploadState.filename}</strong><span>{uploadState.stage}</span></div>
+            <div className="progress mt-2" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={uploadState.percent}>
+              <div className="progress-bar" style={{ width: `${uploadState.percent}%` }}>{uploadState.percent}%</div>
+            </div>
+          </div>
+        )}
       </PermissionGuard>
 
       {datasets.length === 0 ? (

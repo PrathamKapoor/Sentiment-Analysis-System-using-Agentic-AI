@@ -10,42 +10,43 @@ export default function DatasetDetailPanel({ datasetId, onClose, onChanged }) {
   const [dataset, setDataset] = useState(null);
   const [error, setError] = useState(null);
   const [mapping, setMapping] = useState({ text: "", rating: "", date: "", source: "" });
+  const [busy, setBusy] = useState(null);
 
   const load = () => {
-    datasetApi.get(datasetId).then((r) => setDataset(r.data.data)).catch(setError);
+    datasetApi.get(datasetId).then((r) => { setDataset(r.data.data); setMapping((current) => ({ ...current, ...(r.data.data.columnMapping || {}) })); }).catch(setError);
   };
   useEffect(load, [datasetId]);
 
   const onSaveMapping = async () => {
+    if (busy) return;
+    setBusy("mapping"); setError(null);
     try {
       const payload = Object.fromEntries(Object.entries(mapping).filter(([, v]) => v));
       await datasetApi.mapColumns(datasetId, payload);
       showToast("Column mapping saved");
       load();
-    } catch (err) {
-      setError(err);
-    }
+    } catch (err) { setError(err); } finally { setBusy(null); }
   };
 
   const onValidate = async () => {
+    if (busy) return;
+    setBusy("validation"); setError(null);
     try {
       await datasetApi.validate(datasetId);
       showToast("Dataset validated");
       load();
-    } catch (err) {
-      setError(err);
-    }
+    } catch (err) { setError(err); } finally { setBusy(null); }
   };
 
   const onProcess = async () => {
+    if (busy) return;
+    setBusy("processing"); setError(null);
     try {
       await datasetApi.process(datasetId);
       showToast("Dataset processed into reviews");
       load();
       onChanged?.();
-    } catch (err) {
-      setError(err);
-    }
+    } catch (err) { setError(err); } finally { setBusy(null); }
   };
 
   if (!dataset) return null;
@@ -58,6 +59,10 @@ export default function DatasetDetailPanel({ datasetId, onClose, onChanged }) {
       </div>
       <div className="card-body">
         <ErrorAlert error={error} onDismiss={() => setError(null)} />
+        {dataset.preview.columnStats?.[mapping.rating]?.max > 5 && (
+          <div className="alert alert-warning" role="alert">Column “{mapping.rating}” contains values up to {dataset.preview.columnStats[mapping.rating].max}; the supported Rating range is 0–5. Leave Rating unmapped or choose another column.</div>
+        )}
+        {busy && <div className="dataset-stage" role="status" aria-live="polite">{busy === "processing" ? "Processing dataset…" : busy === "validation" ? "Validating dataset…" : "Saving column mapping…"}</div>}
 
         <h6>Preview</h6>
         <div className="table-responsive mb-3" style={{ maxHeight: 200 }}>
@@ -83,6 +88,7 @@ export default function DatasetDetailPanel({ datasetId, onClose, onChanged }) {
               <select
                 className="form-select"
                 value={mapping[field]}
+                disabled={!!busy}
                 onChange={(e) => setMapping({ ...mapping, [field]: e.target.value })}
               >
                 <option value="">—</option>
@@ -91,18 +97,18 @@ export default function DatasetDetailPanel({ datasetId, onClose, onChanged }) {
             </div>
           ))}
         </div>
-        <button className="btn btn-outline-primary btn-sm me-2" onClick={onSaveMapping}>
-          Save Mapping
+        <button className="btn btn-outline-primary btn-sm me-2" onClick={onSaveMapping} disabled={!!busy}>
+          {busy === "mapping" ? "Saving…" : "Save Mapping"}
         </button>
-        <button className="btn btn-outline-primary btn-sm me-2" onClick={onValidate} disabled={!dataset.columnMapping}>
-          Validate
+        <button className="btn btn-outline-primary btn-sm me-2" onClick={onValidate} disabled={!dataset.columnMapping || !!busy}>
+          {busy === "validation" ? "Validating…" : "Validate"}
         </button>
         <button
           className="btn btn-primary btn-sm"
           onClick={onProcess}
-          disabled={dataset.status !== "validated"}
+          disabled={dataset.status !== "validated" || !!busy}
         >
-          Process into Reviews
+          {busy === "processing" ? "Processing…" : "Process into Reviews"}
         </button>
 
         {dataset.rowCount != null && (

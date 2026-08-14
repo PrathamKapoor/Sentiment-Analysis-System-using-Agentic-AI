@@ -1,12 +1,14 @@
 import json
+import hashlib
 import os
+import threading
 import uuid
 from datetime import date, datetime
 
 from flask import current_app
 
 from app.extensions import db
-from app.errors.exceptions import ValidationError
+from app.errors.exceptions import DatasetAlreadyUploadedError, ValidationError
 from app.models import Dataset, Review
 from app.services.dataset_file_parser import read_columns_and_rows
 from app.services.text_cleaning import clean_text, normalize_for_dedup
@@ -26,6 +28,7 @@ _DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d")
 
 PREVIEW_ROW_LIMIT = 20
 MAX_ERROR_SAMPLES = 20
+_DATASET_UPLOAD_LOCK = threading.Lock()
 
 
 def _upload_dir():
@@ -43,6 +46,13 @@ def list_datasets(project_id):
 
 
 def create_dataset(project_id, uploaded_by, file_storage, file_type):
+    # Serialize checksum-check + persist in this process so rapid concurrent
+    # requests cannot both pass the duplicate check before either commits.
+    with _DATASET_UPLOAD_LOCK:
+        return _create_dataset_locked(project_id, uploaded_by, file_storage, file_type)
+
+
+def _create_dataset_locked(project_id, uploaded_by, file_storage, file_type):
     if file_type not in Dataset.FILE_TYPES:
         raise ValidationError(f"fileType must be one of: {', '.join(Dataset.FILE_TYPES)}")
 
@@ -54,7 +64,21 @@ def create_dataset(project_id, uploaded_by, file_storage, file_type):
     if size == 0:
         raise ValidationError("Uploaded file is empty")
 
-    extension = {"csv": ".csv", "json": ".json", "excel": ".xlsx"}[file_type]
+    file_storage.seek(0)
+    content = file_storage.read()
+    file_storage.seek(0)
+    checksum = hashlib.sha256(content).hexdigest()
+    for existing in Dataset.query.filter_by(project_id=project_id).filter(Dataset.deleted_at.is_(None)).all():
+        if not os.path.exists(existing.file_path):
+            continue
+        with open(existing.file_path, "rb") as stored:
+            if hashlib.sha256(stored.read()).hexdigest() != checksum:
+                continue
+        if existing.status == Dataset.STATUS_FAILED:
+            return existing
+        raise DatasetAlreadyUploadedError(details={"datasetId": str(existing.id), "status": existing.status})
+
+    extension = {"csv": ".xlsx" if file_type == "excel" else f".{file_type}"}[file_type]
     stored_name = f"{uuid.uuid4()}{extension}"
     file_path = os.path.join(_upload_dir(), stored_name)
     file_storage.save(file_path)
@@ -74,7 +98,19 @@ def create_dataset(project_id, uploaded_by, file_storage, file_type):
 
 def get_preview(dataset):
     columns, rows = read_columns_and_rows(dataset.file_path, dataset.file_type)
-    return {"columns": columns, "rows": rows[:PREVIEW_ROW_LIMIT], "totalRows": len(rows)}
+    stats = {}
+    for column in columns:
+        values = [row.get(column) for row in rows if row.get(column) not in (None, "")]
+        numeric = []
+        for value in values:
+            try:
+                numeric.append(float(value))
+            except (TypeError, ValueError):
+                numeric = []
+                break
+        stats[column] = {"nonEmpty": len(values), "numeric": bool(values) and bool(numeric),
+                         "min": min(numeric) if numeric else None, "max": max(numeric) if numeric else None}
+    return {"columns": columns, "rows": rows[:PREVIEW_ROW_LIMIT], "totalRows": len(rows), "columnStats": stats}
 
 
 def map_columns(dataset, mapping):
@@ -192,12 +228,22 @@ def validate_dataset(dataset):
     dataset.processing_error = json.dumps(error_samples) if error_samples else None
     dataset.status = Dataset.STATUS_VALIDATED if valid_rows else Dataset.STATUS_FAILED
     db.session.commit()
+    if not valid_rows:
+        raise ValidationError(
+            "Dataset validation failed. Fix the column mapping and validate again.",
+            details={"stage": "validation", "errors": error_samples or [{"row": None, "reason": "No valid rows were found."}], "rowCount": dataset.row_count},
+        )
     return dataset
 
 
 def process_dataset(dataset):
     if dataset.status != Dataset.STATUS_VALIDATED:
-        raise ValidationError("Dataset must be validated (with at least one valid row) before processing")
+        details = {"stage": "validation"}
+        try:
+            details["errors"] = json.loads(dataset.processing_error) if dataset.processing_error else []
+        except (TypeError, ValueError):
+            details["errors"] = []
+        raise ValidationError("Dataset must pass validation before processing. Fix the mapping and try again.", details=details)
 
     existing_hashes = {
         normalize_for_dedup(r.text)

@@ -1,5 +1,6 @@
 import io
 
+from app.models import Review
 from tests.conftest_project import owner_context, create_project
 
 CSV_CONTENT = (
@@ -8,6 +9,12 @@ CSV_CONTENT = (
     ",3,2026-01-02,siteA\n"
     "Great product!,5,2026-01-01,siteA\n"
     "Bad,10,2026-01-03,siteA\n"
+)
+
+CRITIC_SHAPED_CSV = (
+    "grade,publication,text,date\n"
+    "100,Forbes,An excellent and thoughtful review.,2020-03-16\n"
+    "95,IGN,Strong writing and memorable characters.,2020-03-17\n"
 )
 
 
@@ -120,3 +127,51 @@ def test_delete_dataset(client):
 
     list_resp = client.get(f"/api/v1/projects/{project_id}/datasets", headers=headers)
     assert list_resp.get_json()["data"]["items"] == []
+
+
+def test_critic_shape_reports_actionable_rating_validation_without_reviews(client):
+    org_id, headers = owner_context(client)
+    project_id = create_project(client, headers, name="Animal Crossing reviews")
+    dataset_id = _upload_csv(client, project_id, headers, CRITIC_SHAPED_CSV, "critic.csv").get_json()["data"]["datasetId"]
+    mapped = client.post(f"/api/v1/datasets/{dataset_id}/map-columns", json={"text": "text", "rating": "grade", "date": "date", "source": "publication"}, headers=headers)
+    assert mapped.status_code == 200
+    validation = client.post(f"/api/v1/datasets/{dataset_id}/validate", headers=headers)
+    assert validation.status_code == 400
+    error = validation.get_json()["error"]
+    assert error["code"] == "VALIDATION_ERROR"
+    assert "rating must be between 0 and 5" in error["details"]["errors"][0]["reason"]
+    assert error["details"]["stage"] == "validation"
+    assert Review.query.filter_by(project_id=project_id).count() == 0
+
+    # Correcting the mapping by leaving the incompatible critic score
+    # unmapped allows the text/date/publication fields to process normally.
+    client.post(f"/api/v1/datasets/{dataset_id}/map-columns", json={"text": "text", "date": "date", "source": "publication"}, headers=headers)
+    corrected = client.post(f"/api/v1/datasets/{dataset_id}/validate", headers=headers)
+    assert corrected.status_code == 202
+    assert client.post(f"/api/v1/datasets/{dataset_id}/process", headers=headers).status_code == 202
+    reviews = Review.query.filter_by(project_id=project_id).all()
+    assert len(reviews) == 2
+    assert {review.source for review in reviews} == {"Forbes", "IGN"}
+    assert {review.review_date.isoformat() for review in reviews} == {"2020-03-16", "2020-03-17"}
+
+
+def test_identical_file_same_project_is_rejected(client):
+    org_id, headers = owner_context(client)
+    project_id = create_project(client, headers)
+    first = _upload_csv(client, project_id, headers, filename="same.csv")
+    assert first.status_code == 202
+    second = _upload_csv(client, project_id, headers, filename="renamed.csv")
+    assert second.status_code == 409
+    assert second.get_json()["error"]["code"] == "DATASET_ALREADY_UPLOADED"
+
+
+def test_failed_identical_file_can_retry_without_new_dataset(client):
+    org_id, headers = owner_context(client)
+    project_id = create_project(client, headers)
+    first = _upload_csv(client, project_id, headers, CRITIC_SHAPED_CSV, "critic.csv")
+    dataset_id = first.get_json()["data"]["datasetId"]
+    client.post(f"/api/v1/datasets/{dataset_id}/map-columns", json={"text": "text", "rating": "grade"}, headers=headers)
+    assert client.post(f"/api/v1/datasets/{dataset_id}/validate", headers=headers).status_code == 400
+    retry = _upload_csv(client, project_id, headers, CRITIC_SHAPED_CSV, "critic.csv")
+    assert retry.status_code == 202
+    assert retry.get_json()["data"]["datasetId"] == dataset_id

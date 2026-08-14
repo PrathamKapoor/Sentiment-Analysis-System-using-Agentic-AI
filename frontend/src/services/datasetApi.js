@@ -2,12 +2,13 @@ import client from "../api/client";
 
 export const datasetApi = {
   list: (projectId) => client.get(`/projects/${projectId}/datasets`),
-  upload: (projectId, file, fileType) => {
+  upload: (projectId, file, fileType, onUploadProgress) => {
     const form = new FormData();
     form.append("file", file);
     form.append("fileType", fileType);
     return client.post(`/projects/${projectId}/datasets`, form, {
       headers: { "Content-Type": "multipart/form-data" },
+      onUploadProgress,
     });
   },
   get: (datasetId) => client.get(`/datasets/${datasetId}`),
