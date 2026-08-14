@@ -26,6 +26,7 @@ from app.services.collectors.base import CollectionLimits
 from app.services.collectors.registry import get_collector, describe_all_source_types
 from app.services.collectors.robots import is_collection_allowed_by_robots
 from app.services.collectors.security import validate_url_shape
+from app.services.source_fallback import RUNTIME_REGISTRY, run_fallback
 
 _COLLECTION_HISTORY_ACTIONS = (
     "collection.started", "collection.completed", "collection.failed",
@@ -247,6 +248,19 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
         db.session.commit()
         raise
 
+    fallback = None
+    # Level 0 remains authoritative: fallback is considered only after a
+    # permitted direct attempt returned no usable records. It cannot turn a
+    # catalog discovery result into a network request.
+    if not result.records:
+        fallback = run_fallback(
+            source, result.result_code or "NO_RECORDS", RUNTIME_REGISTRY,
+            discovery_mode=current_app.config.get("SOURCE_FALLBACK_DISCOVERY_MODE", "CURATED_ONLY"),
+        )
+        if fallback.status == "SUCCESS":
+            result.records = fallback.records
+            result.fetch_status = "fallback"
+
     existing_hashes = {
         normalize_for_dedup(r.text)
         for r in Review.query.filter_by(project_id=source.project_id).filter(Review.deleted_at.is_(None)).all()
@@ -357,6 +371,7 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
         "reviewPageRedirectCount": result.review_page_redirect_count,
         "reviewDiscoveryMethod": result.review_discovery_method,
         "parserStatus": result.parser_status,
+        "fallback": fallback.provenance if fallback else None,
     }
 
     log_action(organisation_id, actor_user_id, "collection.completed", "data_source", source.id, {

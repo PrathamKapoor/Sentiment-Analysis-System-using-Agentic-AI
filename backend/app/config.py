@@ -62,6 +62,9 @@ class BaseConfig:
     # If Phase 7 orchestration ever needs a "safe test mode," add a
     # separate, narrowly-scoped mechanism — do not repurpose this flag.
     SCRAPER_ALLOW_PRIVATE_TARGETS = os.environ.get("SCRAPER_ALLOW_PRIVATE_TARGETS", "false").lower() == "true"
+    # Discovery is metadata-only and disabled by default. Runtime execution
+    # remains limited to manually reviewed entries in RUNTIME_REGISTRY.
+    SOURCE_FALLBACK_DISCOVERY_MODE = os.environ.get("SOURCE_FALLBACK_DISCOVERY_MODE", "CURATED_ONLY")
 
 
 class DevelopmentConfig(BaseConfig):
