@@ -315,7 +315,45 @@ def test_empty_result_reported_not_errored(client, monkeypatch):
     assert body["recordsInserted"] == 0
     assert body["fetchStatus"] == "success"
     assert body["candidateItemsFound"] == 0
-    assert body["resultCode"] == "COLLECTION_NO_REVIEWS_FOUND"
+    assert body["resultCode"] == "FALLBACK_CREDENTIALS_REQUIRED"
+    assert body["fallback"]["terminalStatus"] == "API_CREDENTIALS_REQUIRED"
+
+
+def test_fallback_records_use_existing_ingestion_dedup_and_audit(client, monkeypatch):
+    import app.services.collection_service as collection_service
+    from app.models import AuditLog, Review
+    from app.services.source_fallback import ApprovedSourceRegistry, Candidate, SourceAdapter
+
+    class ApprovedTestAdapter(SourceAdapter):
+        def validate_configuration(self): pass
+        def is_available(self): return True
+        def search(self, entity, aliases, budget): return {"ok": True}
+        def normalize(self, response):
+            return [
+                {"review_text": "Samsung Galaxy S25 has a great display and battery life.", "rating": None},
+                {"review_text": "Samsung Galaxy S25 has a great display and battery life.", "rating": None},
+            ]
+        def provenance(self, response): return "Reddit public discussions via official OAuth API"
+
+    candidate = Candidate("test-approved", "Test Provider", "Documented API", "https://docs.example.test", "https://api.example.test", "discussion", status="APPROVED")
+    monkeypatch.setattr(collection_service, "RUNTIME_REGISTRY", ApprovedSourceRegistry([candidate], {"test-approved": ApprovedTestAdapter()}))
+    org_id, headers = owner_context(client)
+    project_id = create_project(client, headers, name="Samsung S25")
+    source_id = _create_source(client, headers, project_id)
+    _mock_public_dns(monkeypatch, {"reviews.example.test"})
+    _mock_get(monkeypatch, lambda url: _no_robots(url) if url.endswith("/robots.txt") else _FakeResponse(html="<html><body>No direct reviews</body></html>"))
+
+    response = client.post(f"/api/v1/sources/{source_id}/collect", headers=headers)
+    assert response.status_code == 200
+    body = response.get_json()["data"]
+    assert body["recordsInserted"] == 2
+    assert body["recordsDuplicate"] == 1
+    assert body["fallback"]["apiProvider"] == "Test Provider"
+    assert body["fallback"]["actualSource"].startswith("Reddit")
+    assert Review.query.filter_by(project_id=project_id).count() == 2
+    assert {review.source for review in Review.query.filter_by(project_id=project_id).all()} == {"Test Provider"}
+    audit = AuditLog.query.filter_by(entity_type="data_source", entity_id=source_id, action="collection.completed").one()
+    assert audit.event_metadata["fallback"]["actualSource"].startswith("Reddit")
 
 
 def test_timeout_reported_as_collection_timeout(client, monkeypatch):

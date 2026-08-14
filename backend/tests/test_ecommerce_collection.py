@@ -352,8 +352,9 @@ def test_successful_fetch_with_no_selector_has_explicit_reason(client, monkeypat
     result = client.post(f"/api/v1/sources/{source_id}/collect", headers=headers).get_json()["data"]
     assert result["status"] == "no_records"
     assert result["candidateItemsFound"] == 0
-    assert result["resultCode"] == "COLLECTION_NO_REVIEWS_FOUND"
-    assert "no supported review elements" in result["resultMessage"].lower()
+    assert result["resultCode"] == "FALLBACK_CREDENTIALS_REQUIRED"
+    assert result["fallback"]["terminalStatus"] == "API_CREDENTIALS_REQUIRED"
+    assert "server-side api credentials" in result["resultMessage"].lower()
 
 
 def test_challenge_page_returns_structured_blocked_error(client, monkeypatch):

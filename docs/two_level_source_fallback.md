@@ -11,11 +11,20 @@
    `execute(url)` capability, and catalog URLs, user data, and responses
    cannot set request hosts.
 
-The runtime default is `CURATED_ONLY`; no provider is currently approved or
-configured. Therefore a direct collection with no usable records ends safely
-as `NO_DATA_AVAILABLE` until a documented, permitted provider is reviewed and
-registered. This never bypasses a requested site's robots, challenge,
-authentication, or access restrictions.
+The runtime default is `CURATED_ONLY`. The first approved adapter is the
+**official Reddit OAuth API** (`reddit_official_discussions`), configured only
+through `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, and optional
+`REDDIT_USER_AGENT`. It searches a bounded set of relevant product discussion
+posts and normalizes returned comment bodies; it is not an Amazon-review proxy.
+Its fixed hosts are `www.reddit.com` (OAuth token) and `oauth.reddit.com`
+(search/comments), and every request is validated by the existing SSRF guard.
+
+Reddit requires OAuth access. Missing credentials, malformed responses,
+timeouts, rate limiting, and unavailable service all end safely without
+fabricating records. It preserves provenance as “Reddit public discussions via
+official OAuth API”; this provider supplies public discussion/comment text,
+not verified e-commerce purchase reviews. It has no configured credentials in
+this repository, so live Samsung Galaxy S25 data is not claimed.
 
 Fallback batches retain requested source, requested URL, canonical entity,
 direct status, adapter/provider, actual source, and count in the existing

@@ -260,6 +260,15 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
         if fallback.status == "SUCCESS":
             result.records = fallback.records
             result.fetch_status = "fallback"
+        elif fallback.status == "API_CREDENTIALS_REQUIRED":
+            result.result_code = "FALLBACK_CREDENTIALS_REQUIRED"
+            result.result_message = "An approved fallback provider is available but is not configured. Server-side API credentials are required."
+        elif fallback.status == "RATE_LIMITED":
+            result.result_code = "FALLBACK_RATE_LIMITED"
+            result.result_message = "The approved fallback provider is temporarily rate limited. Try again later."
+        elif fallback.status != "NO_DATA_AVAILABLE":
+            result.result_code = "FALLBACK_UNAVAILABLE"
+            result.result_message = "The approved fallback provider is currently unavailable. You can upload a dataset instead."
 
     existing_hashes = {
         normalize_for_dedup(r.text)
@@ -270,6 +279,7 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
     inserted = 0
     duplicates = 0
     invalid = 0
+    record_source = (fallback.provenance.get("apiProvider") if fallback and fallback.status == "SUCCESS" else None) or source.type
 
     try:
         for raw in result.records:
@@ -294,7 +304,9 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
                 data_source_id=source.id,
                 text=text,
                 reviewer_ref=raw.get("reviewer_name"),
-                source=source.type,
+                # Preserve the requested DataSource relation while making the
+                # per-review visible source truthful for fallback records.
+                source=record_source,
                 rating=rating,
                 review_date=review_date,
                 is_duplicate=is_dup,
@@ -322,7 +334,10 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
     else:
         status = "completed"
 
-    if records_found == 0:
+    if records_found == 0 and fallback and fallback.status == "NO_DATA_AVAILABLE":
+        result_code = "NO_DATA_AVAILABLE"
+        result_message = f"No approved alternative source returned usable review data for {fallback.entity!r}. You can upload a dataset instead."
+    elif records_found == 0:
         result_code = result.result_code or "COLLECTION_NO_REVIEWS_FOUND"
         result_message = result.result_message or "The page loaded, but no review candidates were detected."
     elif inserted == 0 and invalid:

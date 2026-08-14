@@ -60,6 +60,22 @@ function resultMessage(result) {
   return result.resultMessage || `${result.recordsInserted || 0} reviews collected.`;
 }
 
+function FallbackDetails({ fallback }) {
+  if (!fallback) return null;
+  const provider = fallback.apiProvider || (fallback.approvedCandidates ? "Approved provider" : null);
+  return (
+    <div className="collection-fallback" role="status">
+      <strong>Fallback resolution</strong>
+      <span>Direct collection did not return usable review data for {fallback.canonicalEntity || "this source"}.</span>
+      {provider && <span>Provider: {provider}</span>}
+      {fallback.actualSource && <span>Actual source: {fallback.actualSource}</span>}
+      {fallback.terminalStatus === "API_CREDENTIALS_REQUIRED" && <span>Server-side provider credentials are required.</span>}
+      {fallback.terminalStatus === "RATE_LIMITED" && <span>The provider is temporarily rate limited. Try again later.</span>}
+      {!provider && <span>No approved alternative source is currently available. You can upload a dataset instead.</span>}
+    </div>
+  );
+}
+
 function KeywordViewer({ keywords }) {
   const [expanded, setExpanded] = useState(false);
   const [query, setQuery] = useState("");
@@ -179,6 +195,7 @@ function CollectionDetails({ source, latestResult }) {
         </div>
       </div>
       <DiagnosticGrid result={displayResult} />
+      <FallbackDetails fallback={displayResult?.fallback} />
       {displayResult && (
         <details className="collection-technical">
           <summary>Technical details</summary>
