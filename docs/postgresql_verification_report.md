@@ -1,6 +1,6 @@
 # Real PostgreSQL Verification Report
 
-**Completed:** 2026-08-14  
+**Completed:** 2026-08-14
 **Result:** PASS — real PostgreSQL verification completed.
 
 ## Environment and isolation
