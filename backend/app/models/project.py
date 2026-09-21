@@ -14,6 +14,10 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, db.Model):
     start_date = db.Column(db.Date, nullable=True)
     end_date = db.Column(db.Date, nullable=True)
     status = db.Column(db.String(20), nullable=False, default="active")
+    # Optional public business-context URL. When set, the user can opt
+    # into a single bounded public-page fetch at report time. The URL
+    # is never required; the system works fully without it.
+    website_url = db.Column(db.String(2048), nullable=True)
 
     STATUS_ACTIVE = "active"
     STATUS_ARCHIVED = "archived"
@@ -49,6 +53,12 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, db.Model):
     reports = db.relationship(
         "Report", back_populates="project", cascade="all, delete-orphan"
     )
+    aspect_vocabulary = db.relationship(
+        "ProjectAspectVocabulary", back_populates="project", cascade="all, delete-orphan"
+    )
+    website_context = db.relationship(
+        "ProjectWebsiteContext", uselist=False, cascade="all, delete-orphan", back_populates="project",
+    )
 
     def to_dict(self):
         return {
@@ -60,6 +70,7 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, db.Model):
             "startDate": self.start_date.isoformat() if self.start_date else None,
             "endDate": self.end_date.isoformat() if self.end_date else None,
             "status": self.status,
+            "websiteUrl": self.website_url,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }

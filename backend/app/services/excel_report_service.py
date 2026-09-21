@@ -82,7 +82,7 @@ def generate_excel(file_path, organisation_name, project_name, date_from, date_t
             ["Negative %", s["negative"]["percentage"]],
             ["Neutral count", s["neutral"]["count"]],
             ["Neutral %", s["neutral"]["percentage"]],
-            ["Average confidence", s["averageConfidence"]],
+            ["Winning-label score (avg, not prob.)", s["averageConfidence"]],
         ])
 
     if "topicAnalysis" in sections_data:
@@ -129,5 +129,32 @@ def generate_excel(file_path, organisation_name, project_name, date_from, date_t
             wb, "Reviews", ["Text", "Source", "Rating", "Date"], rows, widths=[70, 20, 10, 15],
             date_columns={4: "YYYY-MM-DD"},
         )
+
+    if "aiInterpretation" in sections_data:
+        meta = sections_data["aiInterpretation"]
+        source = meta.get("source", "deterministic")
+        # Same labelling contract as the PDF renderer: "AI-Generated" is
+        # only used when a live LLM produced the text. The deterministic
+        # fallback is named as a summary, not as AI-generated.
+        source_label = "AI-Generated Contextual Interpretation (LLM)" if source == "llm" \
+            else "Deterministic Contextual Summary"
+        rows = [
+            ["Source", source_label],
+            ["Provider", meta.get("provider") or ""],
+            ["Model", meta.get("model") or ""],
+            ["Status", meta.get("status") or ""],
+            ["Latency (ms)", int(meta.get("latencyMs") or 0)],
+            ["Warning", (meta.get("warning") or "")[:500]],
+            ["Notice", (
+                "This section was produced by a language model and is not a measured finding."
+                if meta.get("source") == "llm"
+                else "This section was produced deterministically from the verified metrics. No LLM was used."
+            )],
+            ["Interpretation", meta.get("text", "")],
+        ]
+        # Sheet name reflects the source so an auditor opening the file
+        # sees the provenance immediately.
+        sheet_title = "AI Interpretation" if meta.get("source") == "llm" else "Deterministic Summary"
+        _write_sheet(wb, sheet_title, ["Field", "Value"], rows, widths=[28, 100])
 
     wb.save(file_path)
