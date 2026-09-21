@@ -1,0 +1,117 @@
+version: "3.9"
+
+name: sentiment-management
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sentiment_app_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in your environment}
+      POSTGRES_DB: ${POSTGRES_DB:-sentiment_agentic_prod}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-sentiment_app_user} -d $${POSTGRES_DB:-sentiment_agentic_prod}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - backend-tier
+
+  # Dedicated one-shot migration job. Runs once per deployment, holds
+  # the schema at the configured head, then exits 0. Application
+  # containers wait for this with service_completed_successfully, so
+  # a broken migration is detected BEFORE any app replica starts and
+  # traffic is never routed to a partially-migrated fleet.
+  migrate:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      FLASK_ENV: production
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://sentiment_app_user:${POSTGRES_PASSWORD:?}@db:5432/sentiment_agentic_prod}
+      SECRET_KEY: ${SECRET_KEY:?}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?}
+    networks:
+      - backend-tier
+    command: ["flask", "--app", "run", "db", "upgrade", "head"]
+    restart: "no"
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      FLASK_ENV: production
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://sentiment_app_user:${POSTGRES_PASSWORD:?}@db:5432/sentiment_agentic_prod}
+      SECRET_KEY: ${SECRET_KEY:?}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
+      TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-1}
+      LOG_JSON: ${LOG_JSON:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-200 per minute}
+      LIMITER_STORAGE_URL: ${LIMITER_STORAGE_URL:-memory://}
+      # Multi-instance deployments: point BOTH stores at a shared Redis,
+      # e.g. LIMITER_STORAGE_URL=redis://your-redis:6379/0 and
+      # REVOCATION_STORE_URL=redis://your-redis:6379/1. Left unset, both
+      # run process-local (single-replica safe only).
+      REVOCATION_STORE_URL: ${REVOCATION_STORE_URL:-}
+      REVOCATION_STORE_PREFIX: ${REVOCATION_STORE_PREFIX:-sams:revoked:}
+      REPORT_OUTPUT_DIRECTORY: ${REPORT_OUTPUT_DIRECTORY:-/data/reports}
+      UPLOAD_FOLDER: ${UPLOAD_FOLDER:-/data/uploads}
+      SCRAPER_USER_AGENT: ${SCRAPER_USER_AGENT:-AgenticSentimentSystem/1.0}
+      # Optional LLM provider: set LLM_* envs to enable
+      LLM_PROVIDER: ${LLM_PROVIDER:-deterministic}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-20}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-512}
+      SENTIMENT_ENGINE: ${SENTIMENT_ENGINE:-vader}
+    ports:
+      - "5000:5000"
+    volumes:
+      - reports_data:/data
+    networks:
+      - backend-tier
+    # Migration is the responsibility of the dedicated `migrate` job
+    # above. This service runs only the application server, with the
+    # idempotent permission/role seed. ``flask seed`` is safe to call
+    # on every replica startup because it only inserts missing rows;
+    # see app/services/seed_service.py.
+    command: >
+      sh -c "flask --app run seed && gunicorn -b 0.0.0.0:5000 --workers 2 --threads 2 --timeout 120 run:app"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      TZ: UTC
+    ports:
+      - "8080:80"
+    networks:
+      - backend-tier
+      - frontend-tier
+
+volumes:
+  db_data:
+  reports_data:
+
+networks:
+  backend-tier:
+  frontend-tier:
