@@ -14,4 +14,25 @@ vaderSentiment==3.3.2
 scikit-learn==1.9.0
 reportlab==5.0.0
 requests==2.33.1
+# urllib3 is directly imported by the SSRF connect-time guard
+# (app/services/collectors/security.py monkeypatches its
+# create_connection). requests==2.33.1 declares urllib3<3,>=1.26, so
+# the package is always present transitively — but because this is a
+# security-boundary import, the exact verified version is pinned
+# explicitly rather than left to the transitive resolver.
+urllib3==2.7.0
 beautifulsoup4==4.14.3
+Flask-Limiter==4.1.1
+
+# Redis client — required at runtime when REVOCATION_STORE_URL or
+# LIMITER_STORAGE_URL points at a redis:// backend (multi-instance
+# deployments). Single-process deployments may leave both unset; the
+# package itself carries no runtime cost when unused. Pinned to the
+# version runtime-verified against Redis server 5.0.14.1.
+redis==7.1.1
+
+# Production WSGI servers. Gunicorn covers Linux containers; waitress
+# covers Windows hosts. Both are included so the same requirements file
+# works for the dev workstation and the container image.
+gunicorn==23.0.0
+waitress==3.0.2

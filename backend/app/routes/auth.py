@@ -1,4 +1,5 @@
 from flask import Blueprint, request, g
+
 from flask_jwt_extended import (
     create_access_token, create_refresh_token, get_jwt, jwt_required,
 )
@@ -69,18 +70,17 @@ def login():
 @auth_bp.route("/logout", methods=["POST"])
 @jwt_required(verify_type=False)
 def logout():
-    jti = get_jwt()["jti"]
-    revoke_token(jti)
+    claims = get_jwt()
+    revoke_token(claims["jti"], claims.get("exp"))
     return success_response(message="Logged out successfully")
-
 
 @auth_bp.route("/refresh", methods=["POST"])
 @jwt_required(refresh=True)
 def refresh():
     from flask_jwt_extended import get_jwt_identity
 
-    old_jti = get_jwt()["jti"]
-    revoke_token(old_jti)  # rotation: old refresh token is single-use
+    old_claims = get_jwt()
+    revoke_token(old_claims["jti"], old_claims.get("exp"))
 
     identity = get_jwt_identity()
     access_token, refresh_token = _issue_tokens(identity)
