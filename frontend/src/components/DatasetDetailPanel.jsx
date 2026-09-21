@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { datasetApi } from "../services/datasetApi";
 import { useToast } from "../contexts/ToastContext";
 import ErrorAlert from "../components/ErrorAlert";
+import DatasetProfilePanel from "./DatasetProfilePanel";
 
 const FIELDS = ["text", "rating", "date", "source"];
 
@@ -116,6 +117,8 @@ export default function DatasetDetailPanel({ datasetId, onClose, onChanged }) {
             Rows: {dataset.rowCount} · Valid: {dataset.validRowCount} · Invalid: {dataset.invalidRowCount} · Duplicates: {dataset.duplicateRowCount}
           </div>
         )}
+
+        {dataset.id && <DatasetProfilePanel datasetId={dataset.id} />}
       </div>
     </div>
   );

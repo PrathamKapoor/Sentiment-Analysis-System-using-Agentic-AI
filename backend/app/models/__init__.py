@@ -19,8 +19,10 @@ from app.models.aspect_sentiment import AspectSentiment, LABELS as ASPECT_SENTIM
 from app.models.recommendation import Recommendation, PRIORITIES as RECOMMENDATION_PRIORITIES, STATUSES as RECOMMENDATION_STATUSES
 from app.models.ai_summary import AiSummary, APPROVAL_STATUSES as SUMMARY_APPROVAL_STATUSES
 from app.models.alert import Alert, PRIORITIES as ALERT_PRIORITIES, STATUSES as ALERT_STATUSES, METRICS as ALERT_METRICS, OPERATORS as ALERT_OPERATORS
-from app.models.report import Report, FILE_FORMATS as REPORT_FILE_FORMATS, GENERATION_STATUSES as REPORT_GENERATION_STATUSES
+from app.models.report import Report, FILE_FORMATS as REPORT_FILE_FORMATS, GENERATION_STATUSES as REPORT_GENERATION_STATUSES, REPORT_MODES
 from app.models.agent_workflow import AgentWorkflow, WORKFLOW_TYPES, WORKFLOW_STATUSES
+from app.models.project_aspect_vocabulary import ProjectAspectVocabulary
+from app.models.project_website_context import ProjectWebsiteContext
 
 __all__ = [
     "Organisation",
@@ -59,7 +61,10 @@ __all__ = [
     "Report",
     "REPORT_FILE_FORMATS",
     "REPORT_GENERATION_STATUSES",
+    "REPORT_MODES",
     "AgentWorkflow",
     "WORKFLOW_TYPES",
     "WORKFLOW_STATUSES",
+    "ProjectAspectVocabulary",
+    "ProjectWebsiteContext",
 ]

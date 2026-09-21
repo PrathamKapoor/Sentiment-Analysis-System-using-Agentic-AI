@@ -24,6 +24,7 @@ import AlertManagement from "./pages/AlertManagement";
 import ReportsPage from "./pages/ReportsPage";
 import UserManagement from "./pages/UserManagement";
 import OrganisationRoleManagement from "./pages/OrganisationRoleManagement";
+import SentimentModelQuality from "./pages/SentimentModelQuality";
 import AccessDenied from "./pages/AccessDenied";
 import NotFound from "./pages/NotFound";
 
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="reports" element={<ReportsPage />} />
           </Route>
           <Route path="/comparison" element={<ProductComparison />} />
+          <Route path="/evaluation" element={<SentimentModelQuality />} />
 
           <Route element={<RoleGuard allowedRoles={ADMIN_ROLES} />}>
             <Route path="/admin/users" element={<UserManagement />} />

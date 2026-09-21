@@ -6,6 +6,7 @@ import DataTable from "../components/DataTable";
 import ErrorAlert from "../components/ErrorAlert";
 import FormInput from "../components/FormInput";
 import PermissionGuard from "../components/PermissionGuard";
+import VaderBreakdown from "../components/VaderBreakdown";
 
 export default function ReviewManagement() {
   const { projectId } = useParams();
@@ -20,6 +21,7 @@ export default function ReviewManagement() {
   const [correctionReason, setCorrectionReason] = useState("");
   const [aspectPanelReview, setAspectPanelReview] = useState(null);
   const [aspectPanelData, setAspectPanelData] = useState(null);
+  const [breakdownReview, setBreakdownReview] = useState(null);
 
   const load = () => {
     reviewApi.list(projectId, { search: search || undefined }).then((r) => setReviews(r.data.data.items)).catch(setError);
@@ -146,6 +148,14 @@ export default function ReviewManagement() {
             ),
           },
           {
+            key: "explain", header: "Explain",
+            render: (r) => r.sentiment ? (
+              <button className="btn btn-sm btn-outline-dark" onClick={() => setBreakdownReview(breakdownReview === r.id ? null : r.id)}>
+                {breakdownReview === r.id ? "Hide" : "Why?"}
+              </button>
+            ) : null,
+          },
+          {
             key: "flags", header: "Flags",
             render: (r) => (
               <>
@@ -198,6 +208,25 @@ export default function ReviewManagement() {
         rows={reviews}
         emptyMessage="No reviews yet — connect a source or upload a dataset"
       />
+
+      {breakdownReview && (() => {
+        const r = reviews.find((x) => x.id === breakdownReview);
+        if (!r?.sentiment) return null;
+        return (
+          <div className="card mt-3">
+            <div className="card-header d-flex justify-content-between">
+              <span>Why this sentiment? — VADER explanation</span>
+              <button className="btn-close" onClick={() => setBreakdownReview(null)} />
+            </div>
+            <div className="card-body">
+              <VaderBreakdown breakdown={r.sentiment.vaderBreakdown} compound={r.sentiment.compoundScore} modelName={r.sentiment.modelName} modelVersion={r.sentiment.modelVersion} />
+              <div className="small text-muted mt-2">
+                Label: {r.sentiment.sentimentLabel} · positive {r.sentiment.positiveScore} · negative {r.sentiment.negativeScore} · neutral {r.sentiment.neutralScore} · confidence {(r.sentiment.confidenceScore * 100).toFixed(0)}%
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {aspectPanelReview && (
         <div className="card mt-3">

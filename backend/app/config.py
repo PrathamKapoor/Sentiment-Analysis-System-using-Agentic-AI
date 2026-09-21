@@ -77,6 +77,10 @@ class DevelopmentConfig(BaseConfig):
 
 class TestingConfig(BaseConfig):
     TESTING = True
+    # Rate limiting is disabled in tests — the test suite exercises
+    # rate-limited routes repeatedly, and the deterministic expectations
+    # would otherwise flake on the 4xx that the limiter produces.
+    RATE_LIMIT_ENABLED = False
     SQLALCHEMY_DATABASE_URI = os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:")
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(minutes=15)
 
@@ -92,8 +96,68 @@ class TestingConfig(BaseConfig):
 
 
 class ProductionConfig(BaseConfig):
+    """Production configuration.
+
+    Startup fails fast when a required environment variable is missing
+    rather than silently falling back to a development default. The
+    required variables are documented in backend/.env.example and in
+    docs/production_deployment.md.
+    """
     DEBUG = False
+    TESTING = False
     SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL")
+
+    # Connection pool settings for PostgreSQL deployments. The pool with
+    # pre_ping detects dropped/stale connections before use; recycle forces
+    # periodic connection refresh so long-lived workers don't sit on dead
+    # connections after idle timeout on managed Postgres.
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_size": int(os.environ.get("DB_POOL_SIZE", "5")),
+        "max_overflow": int(os.environ.get("DB_POOL_MAX_OVERFLOW", "5")),
+        "pool_pre_ping": True,
+        "pool_recycle": int(os.environ.get("DB_POOL_RECYCLE_SECONDS", "1800")),
+    }
+
+    # Reverse proxy behavior. TRUSTED_PROXY_COUNT = how many trusted proxy
+    # layers exist in front of the app. 0 = direct internet exposure
+    # (do not trust X-Forwarded-* headers at all).
+    TRUSTED_PROXY_COUNT = int(os.environ.get("TRUSTED_PROXY_COUNT", "0"))
+
+    # Production CORS: comma-separated list of exact origins. Never "" or
+    # "*" — the frontend lives at a single known origin in production.
+    CORS_ORIGINS = [
+        origin.strip()
+        for origin in (os.environ.get("CORS_ALLOWED_ORIGINS") or "").split(",")
+        if origin.strip()
+    ]
+
+    # Optional metrics/logging configuration. JSON logs make parse-able
+    # container output; disable only if an operator needs plain text.
+    LOG_JSON = os.environ.get("LOG_JSON", "true").lower() == "true"
+    LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+
+    @classmethod
+    def validate_environment(cls):
+        """Raise early if required production environment variables are
+        missing. Called from create_app() in production mode."""
+        missing = []
+        for required in ("DATABASE_URL", "SECRET_KEY", "JWT_SECRET_KEY"):
+            if not os.environ.get(required):
+                missing.append(required)
+        if missing:
+            raise RuntimeError(
+                "Missing required production environment variables: "
+                + ", ".join(missing)
+                + ". See backend/.env.example and docs/production_deployment.md."
+            )
+        # The default dev secrets must never be used in production.
+        for key_name in ("SECRET_KEY", "JWT_SECRET_KEY"):
+            value = os.environ[key_name]
+            if "change-me" in value or "dev-" in value:
+                raise RuntimeError(
+                    f"{key_name} is set to the development default; set a "
+                    "strong unique value. See docs/production_deployment.md."
+                )
 
 
 config_by_name = {

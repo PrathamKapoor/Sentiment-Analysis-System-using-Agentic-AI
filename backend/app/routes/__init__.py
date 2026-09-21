@@ -16,6 +16,8 @@ def register_blueprints(app):
     from app.routes.alerts import project_alerts_bp, alerts_bp
     from app.routes.reports import project_reports_bp, reports_bp
     from app.routes.workflows import project_workflows_bp, workflows_bp
+    from app.routes.llm import llm_bp
+    from app.routes.project_website import project_website_bp
 
     app.register_blueprint(health_bp, url_prefix=API_PREFIX)
     app.register_blueprint(auth_bp, url_prefix=f"{API_PREFIX}/auth")
@@ -50,3 +52,15 @@ def register_blueprints(app):
 
     app.register_blueprint(project_workflows_bp, url_prefix=f"{API_PREFIX}/projects/<project_id>/workflows")
     app.register_blueprint(workflows_bp, url_prefix=f"{API_PREFIX}/workflows")
+    app.register_blueprint(llm_bp, url_prefix=f"{API_PREFIX}/llm")
+    app.register_blueprint(
+        project_website_bp, url_prefix=f"{API_PREFIX}/projects/<project_id>/website"
+    )
+
+    from app.routes.dataset_profile import datasets_profile_bp
+    from app.routes.evaluation import evaluation_bp
+    from app.routes.aspect_vocabulary import project_aspect_vocab_bp
+
+    app.register_blueprint(datasets_profile_bp, url_prefix=f"{API_PREFIX}/datasets")
+    app.register_blueprint(evaluation_bp, url_prefix=f"{API_PREFIX}/evaluation")
+    app.register_blueprint(project_aspect_vocab_bp, url_prefix=f"{API_PREFIX}/projects/<project_id>/aspect-vocabulary")

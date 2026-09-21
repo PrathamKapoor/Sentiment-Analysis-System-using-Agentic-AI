@@ -82,7 +82,7 @@ export default function SentimentAnalysisResults() {
           <div className="row g-3 mb-4">
             <div className="col-md-3"><div className="card text-center p-3"><div className="fs-4 fw-bold">{summary.totalReviews}</div><div className="text-muted">Total Reviews</div></div></div>
             <div className="col-md-3"><div className="card text-center p-3"><div className="fs-4 fw-bold">{summary.analysedReviews}</div><div className="text-muted">Analysed</div></div></div>
-            <div className="col-md-3"><div className="card text-center p-3"><div className="fs-4 fw-bold">{(summary.averageConfidence * 100).toFixed(1)}%</div><div className="text-muted">Avg Confidence</div></div></div>
+            <div className="col-md-3"><div className="card text-center p-3"><div className="fs-4 fw-bold">{(summary.averageConfidence * 100).toFixed(1)}%</div><div className="text-muted small">Avg winning-label score</div><div className="text-muted" style={{fontSize:"0.65rem"}}>not a calibrated probability</div></div></div>
             <div className="col-md-3"><div className="card text-center p-3"><div className="fs-6">{summary.model?.name} v{summary.model?.version}</div><div className="text-muted">Model</div></div></div>
           </div>
 

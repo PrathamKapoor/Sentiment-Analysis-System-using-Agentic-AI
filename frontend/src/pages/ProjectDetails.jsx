@@ -10,6 +10,8 @@ import ErrorAlert from "../components/ErrorAlert";
 import ConfirmationModal from "../components/ConfirmationModal";
 import PermissionGuard from "../components/PermissionGuard";
 import AgenticWorkflowPanel from "../components/AgenticWorkflowPanel";
+import ProjectWebsitePanel from "../components/ProjectWebsitePanel";
+import LlmStatusBadge from "../components/LlmStatusBadge";
 
 export default function ProjectDetails() {
   const { projectId } = useParams();
@@ -131,6 +133,12 @@ export default function ProjectDetails() {
         </div>
       )}
 
+      <ProjectWebsitePanel projectId={projectId} />
+
+      <div className="mb-2">
+        <span className="me-2 small text-muted">AI interpretation layer:</span>
+        <LlmStatusBadge />
+      </div>
       <AgenticWorkflowPanel projectId={projectId} />
 
       <div className="d-flex gap-2 flex-wrap">

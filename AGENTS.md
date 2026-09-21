@@ -108,22 +108,40 @@ is explicitly requested.
 
 # 4. Canonical Current Baseline
 
-## Production backend
-
 ```text
-239 passed
+400 passed
 0 failed
-1 warning
+2 warnings
 ```
 
-The older 214-test baseline is historical. The increase is fully accounted for
-by 24 legitimate production tests in:
+The older baselines (214, 239, 291, 344) are historical. The increase from
+239 to 291 was accounted for by 38 new Phase 8 tests (dataset profiling 11,
+VADER explainability 8, benchmark evaluation 9, per-project aspect
+vocabulary 10) plus 14 tests added between the last AGENTS.md sync and
+Phase 8. The Phase 9 increase from 291 to 344 is accounted for by:
+
+  - 19 LLM provider + facade + prompt builder tests
+  - 15 website context tests
+  - 8 report mode tests
+  - 11 observability / aspect / pluggable-sentiment-engine tests
+
+Phases 10–13 brought the suite from 344 to 395 (storage backends, rate
+limiting/wiring, token revocation store, observability, website security,
+prompt injection, deterministic boundary, among others). Phase 14 added
+5 real-Redis integration tests (skip cleanly when no Redis is reachable):
+
+```text
+backend\tests\test_redis_integration.py
+```
+
+Total Phase 9 delta: 53 new tests. The 24-test increase from 214 to 239
+remains as previously documented in:
 
 ```text
 backend\tests\test_ecommerce_collection.py
 ```
 
-Do NOT use 214 as the current expected baseline.
+Do NOT use 214, 239, 291, or 344 as the current expected baseline.
 
 ## Experimental secure-source-fallback prototype
 
@@ -142,9 +160,14 @@ Vite production build: PASS
 ## Production database
 
 ```text
-Tables: 23
-Migration head: 0007
+Tables: 25
+Migration head: 0009
 ```
+
+Migration `0009` adds the optional Phase 9 layers: a `projects.website_url`
+column, a new `project_website_context` table (one row per project,
+caching a single bounded public-page extraction), and a `reports.mode`
+column (`standard` / `enhanced`).
 
 ## Git recovery point
 
@@ -153,6 +176,8 @@ Baseline commit: ddd4bff
 Local tag: baseline-pre-postgresql
 Branch: master
 ```
+
+
 
 Do not delete or force-move the baseline tag casually.
 
@@ -534,7 +559,8 @@ checks. Backend authorization is mandatory.
 
 # 19. Production Database and Migrations
 
-Production schema contains **23 tables**.
+Production schema contains **25 application tables** (26 relations including
+`alembic_version`).
 
 Areas:
 
@@ -544,7 +570,8 @@ organisations, users, organisation_members, roles, permissions,
 role_permissions, member_roles
 
 Projects:
-projects, project_members
+projects, project_members, project_website_context,
+project_aspect_vocabulary
 
 Data:
 data_sources, datasets, reviews
@@ -559,18 +586,28 @@ Operations:
 alerts, reports, audit_logs, agent_workflows
 ```
 
-Older 21/22-table counts are stale unless explicitly historical.
+Older 21/22/23-table counts are stale unless explicitly historical.
 
 Accepted migration chain:
 
 ```text
-0001 -> 0002 -> 0003 -> 0004 -> 0005 -> 0006 -> 0007
+0001 -> 0002 -> 0003 -> 0004 -> 0005 -> 0006 -> 0007 -> 0008 -> 0009
 ```
 
 Do NOT delete, renumber, or casually edit accepted migrations. Do not replace
-migration execution with `db.create_all()`.
+migration execution with `db.create_all()`. The full chain, downgrade, and
+re-upgrade are exercised against real PostgreSQL 18.6 by:
 
-No production `0008` should be created for the isolated prototype.
+```text
+backend\scripts\audit_migration_postgres.py
+```
+
+and the operator backup path (`pg_dump` / `pg_restore` 18.6) is
+runtime-verified against a fully migrated schema by:
+
+```text
+backend\scripts\phase14_pg_dump_drill.py
+```
 
 ---
 
@@ -588,7 +625,7 @@ P1 = OPEN
 A proper validation should include, where practical:
 
 1. empty disposable PostgreSQL DB;
-2. migration `0001 -> 0007`;
+2. migration `0001 -> 0009`;
 3. table/schema count and migration head;
 4. latest downgrade and re-upgrade;
 5. seed operation;
@@ -1025,7 +1062,7 @@ python -m pytest -v
 Expected current baseline:
 
 ```text
-239 passed, 0 failed, 1 warning
+400 passed, 0 failed, 2 warnings
 ```
 
 Prototype:
@@ -1317,9 +1354,9 @@ Known local restore tag:
 baseline-pre-postgresql
 
 Production backend:
-239 passed
+400 passed
 0 failed
-1 warning
+2 warnings
 
 Prototype:
 20 passed
@@ -1328,22 +1365,25 @@ Frontend:
 Vite production build PASS
 
 Production tables:
-23
+25
 
 Migration head:
-0007
+0009
 
 Agent system:
 custom deterministic orchestrator
 
 LLM:
-not required
+optional (deterministic fallback always available; opt-in via LLM_PROVIDER)
 
 LangGraph:
 not used
 
 Collection:
 controlled and sequential
+
+Business-context website:
+optional, opt-in, single bounded public-page read, SSRF-guarded
 
 Secure source fallback:
 experimental and isolated
@@ -1354,8 +1394,23 @@ NO
 Real PostgreSQL verified:
 YES (2026-08-14; PostgreSQL 18.6)
 
+Multi-instance security state:
+VERIFIED 2026-09-06 — two live processes + shared Redis:
+JWT revocation propagates across instances and survives fleet restart
+(REVOCATION_STORE_URL), login rate budget shared across instances
+(LIMITER_STORAGE_URL). scripts\phase14_distributed_verification.py.
+
+Operator backup path:
+VERIFIED 2026-09-06 — real pg_dump/pg_restore 18.6 drill on a fully
+migrated isolated schema, incl. destroy-restore and --clean --if-exists
+restore over corruption. scripts\phase14_pg_dump_drill.py.
+
+Docker runtime:
+ENVIRONMENT BLOCKED (no Docker daemon on the verification host);
+Dockerfiles/compose statically validated only.
+
 Current P1:
-None recorded; browser walkthrough remains the next verification priority
+None recorded
 ```
 
 Any regression from this baseline must be investigated before being accepted.

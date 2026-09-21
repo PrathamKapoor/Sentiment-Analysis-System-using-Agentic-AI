@@ -11,6 +11,7 @@ import AnalysisFilters from "../components/AnalysisFilters";
 import RoleGuard from "../components/RoleGuard";
 import PermissionGuard from "../components/PermissionGuard";
 import ConfirmationModal from "../components/ConfirmationModal";
+import AspectVocabularyPanel from "../components/AspectVocabularyPanel";
 
 function AspectTab({ projectId }) {
   const { showToast } = useToast();
@@ -96,7 +97,7 @@ function AspectTab({ projectId }) {
             { key: "positivePercentage", header: "Positive %" },
             { key: "negativePercentage", header: "Negative %" },
             { key: "neutralPercentage", header: "Neutral %" },
-            { key: "averageConfidence", header: "Avg Confidence" },
+            { key: "averageConfidence", header: "Avg Winning-Label Score" },
           ]}
           rows={sorted}
         />
@@ -114,7 +115,7 @@ function AspectTab({ projectId }) {
               <strong>Positive:</strong> {selected.positivePercentage}% &nbsp;
               <strong>Negative:</strong> {selected.negativePercentage}% &nbsp;
               <strong>Neutral:</strong> {selected.neutralPercentage}% &nbsp;
-              <strong>Avg confidence:</strong> {selected.averageConfidence}
+              <strong>Avg winning-label score:</strong> {(selected.averageConfidence * 100).toFixed(1)}% &nbsp;<span className="text-muted small">(not a calibrated probability)</span>
             </p>
             <h6>Evidence / related reviews</h6>
             <ul className="list-group">
@@ -276,9 +277,14 @@ export default function AspectAndRecommendations() {
             Recommendations
           </button>
         </li>
+        <li className="nav-item">
+          <button className={`nav-link ${tab === "vocabulary" ? "active" : ""}`} onClick={() => setTab("vocabulary")}>
+            Vocabulary
+          </button>
+        </li>
       </ul>
 
-      {tab === "aspects" ? <AspectTab projectId={projectId} /> : <RecommendationsTab projectId={projectId} />}
+      {tab === "aspects" ? <AspectTab projectId={projectId} /> : tab === "recommendations" ? <RecommendationsTab projectId={projectId} /> : <AspectVocabularyPanel projectId={projectId} />}
     </div>
   );
 }
