@@ -31,6 +31,13 @@ class Dataset(UUIDPrimaryKeyMixin, SoftDeleteMixin, db.Model):
     duplicate_row_count = db.Column(db.Integer, nullable=True)
     processing_error = db.Column(db.Text, nullable=True)
 
+    # Quality-profile report computed by ``dataset_profile_service``.
+    # Nullable: existing datasets and any new dataset that hasn't been
+    # profiled yet keep ``profile_report = NULL`` and continue to behave
+    # exactly as before. The profile is a diagnostic, never a blocker.
+    profile_report = db.Column(db.JSON, nullable=True)
+    profile_computed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
     project = db.relationship("Project", back_populates="datasets")
     reviews = db.relationship("Review", back_populates="dataset")
 
@@ -49,4 +56,6 @@ class Dataset(UUIDPrimaryKeyMixin, SoftDeleteMixin, db.Model):
             "invalidRowCount": self.invalid_row_count,
             "duplicateRowCount": self.duplicate_row_count,
             "processingError": self.processing_error,
+            "profileReport": self.profile_report,
+            "profileComputedAt": self.profile_computed_at.isoformat() if self.profile_computed_at else None,
         }

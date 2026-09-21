@@ -89,6 +89,8 @@ def _analyze_and_store(reviews, analyzer):
             existing.negative_score = result["negative_score"]
             existing.neutral_score = result["neutral_score"]
             existing.confidence_score = result["confidence_score"]
+            existing.compound_score = result.get("compound")
+            existing.vader_breakdown = result.get("vader_breakdown")
             existing.model_name = result["model_name"]
             existing.model_version = result["model_version"]
             existing.analysed_at = datetime.now(timezone.utc)
@@ -104,6 +106,8 @@ def _analyze_and_store(reviews, analyzer):
                 negative_score=result["negative_score"],
                 neutral_score=result["neutral_score"],
                 confidence_score=result["confidence_score"],
+                compound_score=result.get("compound"),
+                vader_breakdown=result.get("vader_breakdown"),
                 model_name=result["model_name"],
                 model_version=result["model_version"],
             ))
@@ -201,6 +205,8 @@ def correct_sentiment(review, corrected_label, corrected_by_user_id, reason=None
             negative_score=scores["negative"],
             neutral_score=scores["neutral"],
             confidence_score=1.0,
+            compound_score=None,
+            vader_breakdown=None,
             model_name="manual",
             model_version="n/a",
             analysed_at=now,
@@ -208,6 +214,10 @@ def correct_sentiment(review, corrected_label, corrected_by_user_id, reason=None
         db.session.add(result)
     else:
         result.sentiment_label = corrected_label
+        # A manual correction overrides the VADER explanation — the existing
+        # breakdown was for the automated label, not the human one.
+        result.vader_breakdown = None
+        result.compound_score = None
 
     result.corrected_by_user_id = corrected_by_user_id
     result.corrected_at = now

@@ -28,6 +28,17 @@ class SentimentResult(UUIDPrimaryKeyMixin, db.Model):
     corrected_by_user_id = db.Column(db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     corrected_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
+    # Per-token VADER lexicon breakdown (Phase 8 — explainability).
+    # Nullable so existing rows (analysed before this column was added)
+    # are unaffected. When present, the shape is the same as the
+    # ``vader_breakdown`` block returned by ``VaderSentimentAnalyzer.analyze``:
+    #   {"tokens": [{"token", "lowered", "valence", "matched"}, ...],
+    #    "contributingTerms": {"positive": [...], "negative": [...]}}
+    # This is a lexicon-lookup surface — it never represents an
+    # "objective" sentiment judgment about the review.
+    compound_score = db.Column(db.Numeric(6, 4), nullable=True)
+    vader_breakdown = db.Column(db.JSON, nullable=True)
+
     review = db.relationship("Review", back_populates="sentiment_result")
 
     @property
@@ -43,10 +54,12 @@ class SentimentResult(UUIDPrimaryKeyMixin, db.Model):
             "negativeScore": float(self.negative_score),
             "neutralScore": float(self.neutral_score),
             "confidenceScore": float(self.confidence_score),
+            "compoundScore": float(self.compound_score) if self.compound_score is not None else None,
             "modelName": self.model_name,
             "modelVersion": self.model_version,
             "analysedAt": self.analysed_at.isoformat() if self.analysed_at else None,
             "correctedByUserId": str(self.corrected_by_user_id) if self.corrected_by_user_id else None,
             "correctedAt": self.corrected_at.isoformat() if self.corrected_at else None,
             "isManuallyCorrected": self.is_manually_corrected,
+            "vaderBreakdown": self.vader_breakdown,
         }

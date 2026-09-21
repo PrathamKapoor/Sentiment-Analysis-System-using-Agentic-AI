@@ -209,6 +209,25 @@ def _extract_rows(dataset, existing_text_hashes):
     return valid_rows, error_samples
 
 
+def _compute_and_store_profile(dataset):
+    """Compute the dataset quality profile and persist it on the row.
+
+    Wrapped in a best-effort guard — a profile failure must never make
+    validation itself fail. The profile is a diagnostic; the validation
+    result (row counts, duplicate counts, status) is the source of truth.
+    """
+    try:
+        from datetime import timezone
+        from app.services.dataset_profile_service import build_dataset_profile
+        profile = build_dataset_profile(dataset)
+        dataset.profile_report = profile
+        dataset.profile_computed_at = datetime.now(timezone.utc)
+    except Exception:
+        # Profile is best-effort — validation proceeds without it.
+        dataset.profile_report = None
+        dataset.profile_computed_at = None
+
+
 def validate_dataset(dataset):
     existing_hashes = {
         normalize_for_dedup(r.text)
@@ -227,6 +246,7 @@ def validate_dataset(dataset):
     dataset.duplicate_row_count = duplicate_count
     dataset.processing_error = json.dumps(error_samples) if error_samples else None
     dataset.status = Dataset.STATUS_VALIDATED if valid_rows else Dataset.STATUS_FAILED
+    _compute_and_store_profile(dataset)
     db.session.commit()
     if not valid_rows:
         raise ValidationError(

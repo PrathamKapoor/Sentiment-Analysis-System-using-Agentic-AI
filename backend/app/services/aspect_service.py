@@ -20,6 +20,13 @@ def _get_or_create_aspect(project_id, name, cache):
     return aspect
 
 
+def _analyzer_for_project(project_id):
+    try:
+        return get_aspect_analyzer().for_project(project_id)
+    except Exception:
+        return get_aspect_analyzer()
+
+
 def run_aspect_analysis(project_id, actor_user_id, include_spam=False, include_duplicates=False, force=False):
     organisation_id = db.session.get(Project, project_id).organisation_id
     log_action(organisation_id, actor_user_id, "aspect_analysis.started", "project", project_id, {"force": force})
@@ -32,7 +39,7 @@ def run_aspect_analysis(project_id, actor_user_id, include_spam=False, include_d
         )
     reviews = query.all()
 
-    analyzer = get_aspect_analyzer()
+    analyzer = _analyzer_for_project(project_id)
     aspect_cache = {}
     analysed_review_count = 0
     aspect_link_count = 0
@@ -154,7 +161,7 @@ def list_aspect_reviews(aspect, filters=None):
 
 
 def list_review_aspects(review):
-    analyzer = get_aspect_analyzer()
+    analyzer = _analyzer_for_project(review.project_id)
     links = AspectSentiment.query.filter_by(review_id=review.id).all()
     result = []
     for link in links:
