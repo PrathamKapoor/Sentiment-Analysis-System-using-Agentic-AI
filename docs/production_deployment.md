@@ -41,13 +41,25 @@ Components:
   are cached for one year with `immutable`; the HTML entry is
   revalidated by the browser.
 - **Backend container** — `python:3.13-slim` running `gunicorn`
-  with 2 workers × 2 threads and a 120-second request timeout.
+  with **1 worker × 8 threads** and a 120-second request timeout.
+  A single worker keeps the documented process-level collection
+  serialization (AGENTS.md §23) true; revocation and rate-limit state
+  live in Redis, so nothing is lost on restart and a second replica
+  can be added without a correctness cliff.
   `gunicorn` is the Linux production WSGI server. On a Windows host
   the same app runs under `waitress` (entrypoint
   `python -m app.runner`).
 - **PostgreSQL container** — `postgres:18-alpine` with a named
   volume (`db_data`) for persistent storage. Migrations are applied
-  by the backend container on startup **before** `gunicorn` starts.
+  by a dedicated one-shot `migrate` service; backend replicas wait for
+  it to exit successfully before starting.
+- **Redis container** — `redis:7-alpine` with AOF persistence
+  (`redis_data` volume), backing the JWT revocation store
+  (`REVOCATION_STORE_URL`, db 1) and Flask-Limiter storage
+  (`LIMITER_STORAGE_URL`, db 0) in the bundled compose file. The
+  revocation store is fail-closed: if Redis is unreachable, tokens
+  are treated as revoked, so the backend waits for Redis health
+  before starting.
 
 Celery is deliberately **not** introduced. All current
 report / LLM / collection / analysis operations are short enough to
@@ -59,7 +71,9 @@ Redis is **not an application dependency** — the app runs correctly
 with zero Redis. It is only the recommended *shared state backend*
 when you scale past one replica: `LIMITER_STORAGE_URL` (rate-limit
 budgets) and `REVOCATION_STORE_URL` (JWT logout/refresh revocation).
-Single-instance deployments leave both unset. See the "Recommended"
+Bare single-instance deployments can leave both unset; the bundled
+compose file provisions Redis and wires both variables by default so
+the fleet-correct configuration is the out-of-the-box one. See the "Recommended"
 env table for the horizontal-scaling contract.
 
 ---
@@ -286,16 +300,20 @@ managed PostgreSQL or `wal-g`/`pgbackrest` is recommended.
 ### Production (Linux)
 
 ```text
-gunicorn -b 0.0.0.0:5000 --workers 2 --threads 2 --timeout 120 run:app
+gunicorn -b 0.0.0.0:5000 --workers 1 --threads 8 --timeout 120 run:app
 ```
 
 Tuning:
 
-- **Workers**: `2 * CPU + 1` is the textbook formula; the bundled
-  value of `2` keeps memory small for a small-team deployment.
-- **Threads**: `2` per worker — Flask-SQLAlchemy releases the GIL
-  during I/O so two threads per worker give useful concurrency
-  without ballooning DB pool pressure.
+- **Workers**: intentionally `1`. Web collection is serialized by a
+  process-level lock (AGENTS.md §23) and multi-worker collection
+  requires the separately-approved concurrency redesign, so the
+  bundled deployment runs one process. Revocation and rate-limit
+  state live in Redis, so scaling replicas later is a config change,
+  not a correctness cliff.
+- **Threads**: `8` per worker — Flask-SQLAlchemy releases the GIL
+  during I/O; threads give useful concurrency for API traffic while
+  the collection lock keeps fetch chains one-at-a-time.
 - **Timeout**: `120s` to accommodate large dataset uploads, PDF
   generation, and slower LLM calls.
 

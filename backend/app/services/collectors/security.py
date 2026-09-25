@@ -12,6 +12,7 @@ Two checks, deliberately kept separate:
 """
 import ipaddress
 import socket
+import threading
 from contextlib import contextmanager
 from urllib.parse import urlparse
 
@@ -93,6 +94,20 @@ def validate_url_ssrf(url):
 
 _real_create_connection = _urllib3_connection.create_connection
 
+# The SSRF connect-time check is applied via a thread-local opt-in rather
+# than swapping urllib3's module-level create_connection for the duration of
+# a request. The old swap/restore pattern was a process-wide race: a second
+# guarded fetch (e.g. a website-context refresh while a collection was
+# running) would see the original function restored by the first request's
+# finally-block mid-flight, silently losing the connect-time check for the
+# remainder of its fetch. Here the checked function is installed exactly once
+# at import time and delegates to the real implementation unless the calling
+# thread has marked itself guarded, so concurrent guarded fetches never
+# interfere and unrelated traffic (tests, non-collector requests) is
+# untouched. _guard_state is per-thread; a nested guarded context is a no-op
+# re-set of the same flag.
+_guard_state = threading.local()
+
 
 def _ssrf_checked_create_connection(address, *args, **kwargs):
     """Drop-in replacement for urllib3's own connect entrypoint. This is
@@ -103,6 +118,9 @@ def _ssrf_checked_create_connection(address, *args, **kwargs):
     validation time could resolve to a private IP by connection time. This
     hook re-validates the literal address urllib3 is about to connect to,
     inside its own connect path — not a separate earlier check.
+
+    Unconditionally validating (public contract, pinned by tests); callers
+    that should skip the check use _guarded_create_connection instead.
     """
     host = address[0]
     if not _private_targets_allowed():
@@ -119,20 +137,42 @@ def _ssrf_checked_create_connection(address, *args, **kwargs):
     return _real_create_connection(address, *args, **kwargs)
 
 
+def _guarded_create_connection(address, *args, **kwargs):
+    """The function actually installed as urllib3's create_connection.
+    Runs the SSRF connect-time check only when the calling thread has armed
+    it via ssrf_safe_connections(); otherwise a transparent pass-through, so
+    non-collector traffic (tests, health checks, unrelated libraries) is
+    never affected by this module being imported."""
+    if getattr(_guard_state, "active", False):
+        return _ssrf_checked_create_connection(address, *args, **kwargs)
+    return _real_create_connection(address, *args, **kwargs)
+
+
+def ssrf_guard_active() -> bool:
+    """True when the current thread is inside an ssrf_safe_connections()
+    context (connect-time re-validation is armed)."""
+    return bool(getattr(_guard_state, "active", False))
+
+
 @contextmanager
 def ssrf_safe_connections():
-    """Scopes urllib3's connect entrypoint to the SSRF-checked version for
-    the duration of one collector HTTP call. Every session.get() in
-    static_html.py/robots.py must run inside this context.
+    """Arms the connect-time SSRF re-validation for the duration of one
+    collector HTTP call. Every session.get() in static_html.py/robots.py
+    must run inside this context.
 
-    Not thread-safe across concurrent collection requests in the same
-    process (it patches a module-level function) — acceptable because
-    collection is synchronous-within-one-request throughout this codebase
-    (see docs/phase6_agent_handoff.md); revisit if collection is ever made
-    concurrent within a single process.
+    This is thread-local by design: concurrent guarded fetches in the same
+    process (collection + website-context refresh) each arm only their own
+    thread, so no request can un-guard another. The flag is saved and
+    restored, making nested guarded contexts safe.
     """
-    _urllib3_connection.create_connection = _ssrf_checked_create_connection
+    previous = getattr(_guard_state, "active", False)
+    _guard_state.active = True
     try:
         yield
     finally:
-        _urllib3_connection.create_connection = _real_create_connection
+        _guard_state.active = previous
+
+
+# Install the guarded wrapper once. Outside a guarded context it behaves
+# exactly like urllib3's original.
+_urllib3_connection.create_connection = _guarded_create_connection

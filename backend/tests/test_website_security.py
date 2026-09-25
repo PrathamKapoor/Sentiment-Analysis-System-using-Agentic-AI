@@ -84,6 +84,64 @@ def test_connect_time_hook_rejects_private_address(monkeypatch):
         sec._ssrf_checked_create_connection(("::1", 443))
 
 
+def test_guard_survives_a_concurrent_request_exiting_first(monkeypatch):
+    """Regression for the swap/restore race: when two guarded fetches overlap,
+    one exiting must NOT disarm the other's connect-time check.
+
+    Old design swapped urllib3's module-level create_connection and restored
+    the original in finally — so the second thread's remaining hops connected
+    unguarded. New design installs a thread-armed wrapper once; this test
+    walks the exact interleaving:
+      A enters guard, B enters guard, B exits (its finally runs),
+      then A — still inside its guard — makes a connect through the module
+      reference urllib3 uses. It must raise COLLECTION_SSRF_BLOCKED.
+    Under the old swap/restore code, B's exit would have restored the real
+    connector and A's call would attempt a TCP connect instead.
+    """
+    import threading
+    from app.services.collectors import security as sec
+
+    import urllib3.util.connection as _conn
+
+    # No real sockets: the SSRF check must fire before any connect attempt,
+    # so the private target raises and _real_create_connection is never used.
+    results = {}
+    a_in_guard = threading.Event()
+    b_done = threading.Event()
+
+    def thread_b():
+        with sec.ssrf_safe_connections():
+            pass
+        b_done.set()
+
+    def thread_a():
+        with sec.ssrf_safe_connections():
+            a_in_guard.set()
+            b_done.wait(timeout=5)
+            # B has now run its finally-block. A is still guarded.
+            assert sec.ssrf_guard_active()
+            try:
+                _conn.create_connection(("127.0.0.1", 9))
+                results["a"] = "connected-unguarded"
+            except CollectionError as exc:
+                results["a"] = f"blocked:{exc.code}"
+            except OSError:
+                results["a"] = "connected-unguarded"  # real socket error = guard was off
+
+    ta = threading.Thread(target=thread_a)
+    tb = threading.Thread(target=thread_b)
+    ta.start()
+    a_in_guard.wait(timeout=5)
+    tb.start()
+    tb.join(timeout=5)
+    ta.join(timeout=10)
+    assert results.get("a") == "blocked:COLLECTION_SSRF_BLOCKED"
+
+    # Module-level invariant: the guarded wrapper is permanently installed;
+    # exiting any context never restores the original connector.
+    assert _conn.create_connection is sec._guarded_create_connection
+
+
 def test_per_hop_validate_rejects_private_ip_literal(monkeypatch):
     """Redirect destinations are re-validated per hop before fetch.
     A URL that is *already* an IP literal is blocked by the shape+SSRF

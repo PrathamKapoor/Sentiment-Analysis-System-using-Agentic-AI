@@ -4,7 +4,9 @@ Backends:
 
   LocalStorageBackend     — the default. Files under
                            ``UPLOAD_FOLDER`` / ``REPORT_OUTPUT_DIRECTORY``
-                           on the local filesystem. Works for a single
+                           when set, else Flask's instance folder
+                           (``<instance>/uploads``,
+                           ``<instance>/generated_reports``). Works for a single
                            process or a single host with attached disk.
 
   EphemeralBackend       — same as LocalStorageBackend but rooted in
@@ -260,10 +262,16 @@ def get_storage() -> StorageBackend:
         )
         return _backend
 
-    # Default: local disk.
+    # Default: local disk. With REPORT_OUTPUT_DIRECTORY unset, persist under
+    # <instance>/generated_reports (mirrors the uploads default in
+    # dataset_service) so report artifacts survive process restarts instead of
+    # vanishing from a temp dir. Ephemeral root only when there is no app
+    # context at all (standalone scripts/tests that never call get_storage).
     cfg = current_app.config if current_app else None
-    root = (cfg or {}).get("REPORT_OUTPUT_DIRECTORY") if cfg else None
-    if root:
+    if cfg is not None:
+        root = cfg.get("REPORT_OUTPUT_DIRECTORY") or os.path.join(
+            current_app.instance_path, "generated_reports"
+        )
         _backend = LocalStorageBackend(root)
     else:
         _backend = EphemeralBackend(tempfile.mkdtemp(prefix="sams_storage_"))

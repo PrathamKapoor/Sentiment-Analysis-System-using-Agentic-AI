@@ -44,17 +44,19 @@ _LOCK_ACQUIRE_TIMEOUT_SECONDS = 30
 
 @contextmanager
 def _serialized_collection():
-    """Process-wide serialization for anything that calls
-    ssrf_safe_connections() (app/services/collectors/security.py).
+    """Process-wide serialization for outbound collection calls
+    (test_connection, preview_source, collect_source).
 
-    Why this is needed: ssrf_safe_connections() monkeypatches a
-    module-level urllib3 function for the duration of one HTTP call. If
-    two collection requests ran concurrently within the same process
-    (Flask's dev server with threaded=True, or any future threaded WSGI
-    worker), one request's __exit__ could un-patch the hook while the
-    other request's fetch is still relying on it being active — silently
-    disabling SSRF protection for the second request. This lock makes
-    that impossible by serializing every such call in-process.
+    Why this is kept: collection is intentionally sequential at process
+    level (AGENTS.md §23) — one fetch chain at a time honors the delay,
+    max-pages, and rate-limit budgets shared across sources, and gives
+    stable 503 COLLECTION_BUSY behaviour under load. Historically this
+    lock also prevented a race in ssrf_safe_connections(), which swapped
+    a module-level urllib3 function for the duration of one HTTP call;
+    that monkeypatch race is now gone (security.py installs the guard
+    once with a thread-local armed flag), so concurrent guarded fetches
+    can no longer un-patch each other. The serialization itself is a
+    deliberate product behaviour, not just a race guard.
 
     Bounded wait, not indefinite — a stuck lock can't hang every future
     request forever; a caller that can't acquire it within the timeout
@@ -369,6 +371,9 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
         "candidateItemsFound": result.candidate_items_found,
         "itemsParsed": result.items_parsed,
         "itemsAfterFilter": result.items_after_filter,
+        # Always 0 by design: duplicates are INSERTED and FLAGGED
+        # (is_duplicate=True, counted in recordsDuplicate), never dropped —
+        # Phase 2 precedent, pinned by test_duplicate_detection_across_collection_runs.
         "duplicatesSkipped": 0,
         "itemsSaved": inserted,
         "resultCode": result_code,

@@ -109,10 +109,16 @@ is explicitly requested.
 # 4. Canonical Current Baseline
 
 ```text
-400 passed
+401 passed
 0 failed
 2 warnings
 ```
+
+The 400 → 401 increase is one regression test added when the SSRF
+connect-time guard was reworked from a swap/restore monkeypatch to a
+thread-local armed flag (`tests/test_website_security.py::
+test_guard_survives_a_concurrent_request_exiting_first`), which pins the
+fix for the concurrent-fetch un-guard race.
 
 The older baselines (214, 239, 291, 344) are historical. The increase from
 239 to 291 was accounted for by 38 new Phase 8 tests (dataset profiling 11,
@@ -693,7 +699,13 @@ environment-only, and never frontend/API/agent/workflow/data/LLM-controlled.
 
 Collection is intentionally serialized at process level. Do not remove the
 collection lock casually. It is not a distributed/multi-worker lock; production
-multi-worker collection requires a separate redesign.
+multi-worker collection requires a separate redesign. The lock also enforces
+the shared per-process delay/page/rate budgets, so it is product behavior, not
+only a safety guard. The SSRF connect-time check is now thread-local (armed by
+`ssrf_safe_connections()`), so concurrent guarded fetches — including the
+website-context refresh path, which does not take the collection lock — can no
+longer un-guard one another; the bundled deployment therefore runs a single
+backend worker process.
 
 Preserve stable collection error codes where implemented, including:
 
@@ -1062,7 +1074,7 @@ python -m pytest -v
 Expected current baseline:
 
 ```text
-400 passed, 0 failed, 2 warnings
+401 passed, 0 failed, 2 warnings
 ```
 
 Prototype:
@@ -1354,7 +1366,7 @@ Known local restore tag:
 baseline-pre-postgresql
 
 Production backend:
-400 passed
+401 passed
 0 failed
 2 warnings
 
@@ -1380,7 +1392,13 @@ LangGraph:
 not used
 
 Collection:
-controlled and sequential
+controlled and sequential (process-level serialization retained;
+SSRF connect guard is thread-local rather than a swap/restore monkeypatch)
+
+Deployment default (docker-compose):
+single backend worker + shared Redis for revocation and rate-limit state;
+a dedicated one-shot migrate service applies the migration chain before
+replicas start
 
 Business-context website:
 optional, opt-in, single bounded public-page read, SSRF-guarded

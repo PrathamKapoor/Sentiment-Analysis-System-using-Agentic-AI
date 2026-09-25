@@ -20,6 +20,28 @@ services:
     networks:
       - backend-tier
 
+  # Shared state store for token revocation and the rate-limit budget.
+  # With workers=1 below this is technically optional for a single box,
+  # but it means logout revocations and rate limits SURVIVE restarts and
+  # become correct the moment a second replica is added (the exact setup
+  # backend/scripts/phase14_distributed_verification.py verifies).
+  # Note: RedisRevocationStore fails CLOSED — if this service is down,
+  # every token is treated as revoked. Backend containers therefore wait
+  # for it to be healthy.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend-tier
+
   # Dedicated one-shot migration job. Runs once per deployment, holds
   # the schema at the configured head, then exits 0. Application
   # containers wait for this with service_completed_successfully, so
@@ -46,6 +68,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     environment:
@@ -60,12 +84,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
       RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-200 per minute}
-      LIMITER_STORAGE_URL: ${LIMITER_STORAGE_URL:-memory://}
-      # Multi-instance deployments: point BOTH stores at a shared Redis,
-      # e.g. LIMITER_STORAGE_URL=redis://your-redis:6379/0 and
-      # REVOCATION_STORE_URL=redis://your-redis:6379/1. Left unset, both
-      # run process-local (single-replica safe only).
-      REVOCATION_STORE_URL: ${REVOCATION_STORE_URL:-}
+      # Shared state via the redis service so logout revocation and the
+      # login rate budget survive restarts and scale to more replicas.
+      LIMITER_STORAGE_URL: ${LIMITER_STORAGE_URL:-redis://redis:6379/0}
+      REVOCATION_STORE_URL: ${REVOCATION_STORE_URL:-redis://redis:6379/1}
       REVOCATION_STORE_PREFIX: ${REVOCATION_STORE_PREFIX:-sams:revoked:}
       REPORT_OUTPUT_DIRECTORY: ${REPORT_OUTPUT_DIRECTORY:-/data/reports}
       UPLOAD_FOLDER: ${UPLOAD_FOLDER:-/data/uploads}
@@ -89,8 +111,15 @@ services:
     # idempotent permission/role seed. ``flask seed`` is safe to call
     # on every replica startup because it only inserts missing rows;
     # see app/services/seed_service.py.
+    #
+    # ONE worker process: web collection is deliberately serialized by a
+    # process-level lock (app/services/collection_service.py) and AGENTS.md
+    # defers multi-worker collection to a separate concurrency redesign.
+    # Threads within the process are safe (the lock is a threading.Lock and
+    # the SSRF connect guard is now thread-local). Revocation and rate-limit
+    # state live in Redis, so a restart loses nothing.
     command: >
-      sh -c "flask --app run seed && gunicorn -b 0.0.0.0:5000 --workers 2 --threads 2 --timeout 120 run:app"
+      sh -c "flask --app run seed && gunicorn -b 0.0.0.0:5000 --workers 1 --threads 8 --timeout 120 run:app"
 
   frontend:
     build:
@@ -110,6 +139,7 @@ services:
 
 volumes:
   db_data:
+  redis_data:
   reports_data:
 
 networks:
