@@ -74,9 +74,16 @@ jobs:
       # re-upgrade against a real PostgreSQL server, in an isolated
       # schema. This is the automated form of the Phase 11 audit that
       # was previously a manual drill (scripts/audit_migration_postgres.py).
+      #
+      # NOTE: the audit deliberately runs in a throwaway schema and DROPS
+      # it on the way out, so it leaves the default (public) schema empty.
+      # The seed step below therefore needs its own `db upgrade` first.
       - name: Run migration audit against real PostgreSQL
         run: |
           python -m scripts.audit_migration_postgres
+      - name: Apply migrations to the default schema
+        run: |
+          flask --app run db upgrade
       - name: Seed permissions and roles against PostgreSQL
         run: |
           flask --app run seed
