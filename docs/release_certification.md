@@ -25,7 +25,8 @@ to `VERIFIED` with real-process, real-Redis, real-`pg_dump` evidence.
 | Area | Status | Evidence | Limitation |
 | --- | --- | --- | --- |
 | Repository integrity | VERIFIED | `git status` preserved; HEAD `5db31fa`; no destructive git operations executed; `backend/.env` is gitignored. | None. |
-| Backend regression suite | VERIFIED | `python -m pytest -q` → **400 passed, 0 failed, 2 warnings** (includes 5 new real-Redis integration tests and 10 revocation + 4 limiter-wiring unit tests). | None. |
+| Backend regression suite | VERIFIED | `python -m pytest -q` → **414 passed, 0 failed, 2 warnings** (includes 5 new real-Redis integration tests, 10 revocation + 4 limiter-wiring unit tests, and 13 CORS-allowlist tests added with the Flask-CORS 5.x → 6.x security upgrade). | None. |
+| Dependency audit | VERIFIED (clean) | `pip-audit -r requirements.txt` → **No known vulnerabilities found** (exit 0). Previously 16 advisories across 5 packages; resolved by Flask 3.1.3, Flask-CORS 6.0.5, marshmallow 3.26.2, python-dotenv 1.2.3, pytest 9.1.1. | The CI `security-scans` job stays `continue-on-error: true` by policy, so a future advisory is reported but does not block unrelated pushes. |
 | Frontend production build | VERIFIED | `npm run build` exits 0; `dist/index.html` + hashed JS/CSS emitted (7.17s). | Bundle-size warning (>500 kB chunk) is informational. |
 | PostgreSQL migrations | VERIFIED | `python -m scripts.audit_migration_postgres` → upgrade→downgrade→re-upgrade clean in isolated schema; ≥25 tables; JSON + UUID verified. | None. |
 | PostgreSQL runtime | VERIFIED | Real PostgreSQL 18.6; psycopg v3; pooled with `pre_ping` + recycle. | Localhost server, not the alpine container. |

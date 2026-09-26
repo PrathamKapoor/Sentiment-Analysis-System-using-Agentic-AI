@@ -109,12 +109,25 @@ is explicitly requested.
 # 4. Canonical Current Baseline
 
 ```text
-401 passed
+414 passed
 0 failed
 2 warnings
 ```
 
-The 400 → 401 increase is one regression test added when the SSRF
+The 401 → 414 increase is 13 new tests in
+`tests/test_cors_configuration.py`, added when Flask-CORS was upgraded
+5.x → 6.x to clear PYSEC-2026-1383/1384/1385. That is a major version
+bump on a security-boundary library (the production CORS allowlist), and
+CORS had no test coverage at all beforehand, so the new module pins:
+a non-allowlisted `Origin` gets no `Access-Control-Allow-Origin`; an
+allowlisted origin is echoed exactly and never wildcarded; credentials
+stay permitted; the allowlist stays scoped to `/api/*`; an unset
+allowlist falls back to `FRONTEND_URL` and never to `*`; and
+`CORS_ALLOWED_ORIGINS` env parsing (including whitespace and the empty
+case). The tests were mutation-checked: wildcarding the allowlist makes 8
+of them fail, so they are not vacuous.
+
+The 400 → 401 increase was one regression test added when the SSRF
 connect-time guard was reworked from a swap/restore monkeypatch to a
 thread-local armed flag (`tests/test_website_security.py::
 test_guard_survives_a_concurrent_request_exiting_first`), which pins the
@@ -1074,7 +1087,7 @@ python -m pytest -v
 Expected current baseline:
 
 ```text
-401 passed, 0 failed, 2 warnings
+414 passed, 0 failed, 2 warnings
 ```
 
 Prototype:
@@ -1366,7 +1379,7 @@ Known local restore tag:
 baseline-pre-postgresql
 
 Production backend:
-401 passed
+414 passed
 0 failed
 2 warnings
 

@@ -13,7 +13,7 @@
 [![Python](https://img.shields.io/badge/Python-3.13-3776ab?style=flat-square&logo=python)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.1-000000?style=flat-square&logo=flask)](https://flask.palletsprojects.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-4169e1?style=flat-square&logo=postgresql)](https://www.postgresql.org/)
-[![Tests](https://img.shields.io/badge/Tests-401%20Passing-10b981?style=flat-square)](#testing--verification)
+[![Tests](https://img.shields.io/badge/Tests-414%20Passing-10b981?style=flat-square)](#testing--verification)
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple?style=flat-square)](./LICENSE)
 [![Status: Work in Progress](https://img.shields.io/badge/Status-Work%20in%20Progress-orange?style=flat-square)](#project-status--work-in-progress)
 
@@ -199,7 +199,7 @@ flowchart TD
 | **Security** | `urllib3` 2.7 (connect-time hook), Flask-Limiter 4.1, `redis` 7.1 | SSRF guard, rate limiting, shared revocation state |
 | **Reports** | ReportLab 5.0, openpyxl 3.1.5 | PDF + Excel rendering, real data types |
 | **Serving** | Gunicorn (containers), Waitress (Windows host) | Production WSGI |
-| **Testing** | pytest 8.3 | 401 backend tests + 20 isolated prototype tests |
+| **Testing** | pytest 9.1 | 414 backend tests + 20 isolated prototype tests |
 
 ---
 
@@ -444,7 +444,7 @@ REVOCATION_STORE_URL=redis://localhost:6379/1
 ## Testing & Verification
 
 ```bash
-# Backend — 401 tests, in-memory SQLite, no external services required
+# Backend — 414 tests, in-memory SQLite, no external services required
 cd backend
 python -m pytest -v
 ```
@@ -465,7 +465,7 @@ python -m pytest -v
 
 | Verification | Result |
 |---|---|
-| Backend pytest suite | ✅ **401 passed, 0 failed, 2 warnings** |
+| Backend pytest suite | ✅ **414 passed, 0 failed, 2 warnings** |
 | Experimental prototype suite | ✅ **20 passed** |
 | Frontend Vite production build | ✅ **PASS** (159 modules) |
 | Migration chain `0001 → 0009` on real PostgreSQL 18.6 (upgrade → downgrade → re-upgrade) | ✅ Verified via `scripts/audit_migration_postgres.py` |
@@ -605,7 +605,7 @@ Sentiment-Analysis-System-using-Agentic-AI/
 │   │                            # summary, alert, report, collection, dataset, storage, audit
 │   ├── migrations/versions/     # 0001 → 0009 (single accepted chain)
 │   ├── scripts/                 # Migration audit, smoke, load, backup & distributed drills
-│   ├── tests/                   # 43 test modules — 401 tests
+│   ├── tests/                   # 44 test modules — 414 tests
 │   ├── fixtures/                # 70-row hand-labelled sentiment benchmark
 │   ├── .env.example             # Committed template, placeholders only
 │   ├── requirements.txt         # Pinned dependencies
