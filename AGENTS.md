@@ -109,10 +109,31 @@ is explicitly requested.
 # 4. Canonical Current Baseline
 
 ```text
-414 passed
+435 passed
 0 failed
 2 warnings
 ```
+
+The 414 → 435 increase is 21 new tests across two changes:
+
+`tests/test_langgraph_orchestrator.py` (17 tests) — added with the
+opt-in LangGraph engine. Pins that the `StateGraph` runner is
+step-for-step equivalent to the deterministic one for every workflow type
+(with real seeded reviews, so it covers actual agent execution, not just
+routing), that the human approval gate and the critical-failure blocking
+both survive, that there is exactly one graph node per registered agent
+(no new tool surface), and that a failed LangGraph import falls back to the
+deterministic runner instead of erroring.
+
+`tests/test_reports.py` (4 tests) — regression coverage for two real
+report-generation bugs that no existing test reached, because every prior
+report test either skipped topic/aspect analysis or omitted the affected
+section. `report_data_service` read `topic_service.list_topics()` output
+(which returns serialised dicts) with attribute access, and read
+`sentiment_service.get_summary()` buckets with a `label` key that the
+service does not return. Any report including the Topics section, or the
+Conclusion section on a project with sentiment *and* aspect analysis, died
+with `'dict' object has no attribute 'name'` / `KeyError: 'label'`.
 
 The 401 → 414 increase is 13 new tests in
 `tests/test_cors_configuration.py`, added when Flask-CORS was upgraded
@@ -233,7 +254,11 @@ Do NOT add unless explicitly requested:
 - new autonomous agents;
 - new database tables;
 - new permission families;
-- LangGraph;
+- an LLM in the orchestration control loop, or any model-directed branching,
+  tool-calling, or `interrupt()`-based approval;
+- a LangGraph checkpointer (durable workflow state must stay in
+  `agent_workflows`; a saver would mean a 26th table and a second source
+  of truth);
 - mandatory LLM/cloud-AI dependency;
 - Celery or Redis;
 - Selenium or Scrapy;
@@ -1087,7 +1112,7 @@ python -m pytest -v
 Expected current baseline:
 
 ```text
-414 passed, 0 failed, 2 warnings
+435 passed, 0 failed, 2 warnings
 ```
 
 Prototype:
@@ -1176,7 +1201,9 @@ Examples: production collection concurrency redesign, idempotency TTL, selected
 report/UI/source-configuration polish.
 
 ## P3 — optional/future
-Examples: Reddit OAuth, scheduler, LangGraph, optional local LLM, advanced
+Examples: Reddit OAuth, scheduler, model-directed orchestration (LLM planner /
+tool-calling nodes / `interrupt()`-based approval) on top of the existing
+LangGraph engine, checkpointed graph execution, optional local LLM, advanced
 background infrastructure, advanced PDF cosmetics, secure-source-fallback
 production integration.
 
@@ -1211,8 +1238,9 @@ Planning/SRS docs are in `C:\pratham_normaldev` and may contain stale decisions.
 Do not blindly rewrite production code to match them.
 
 Known synchronization areas include recommendation states, table count 23,
-migration 0006 audit index, `agent_workflows`, workflow endpoints, deterministic
-orchestrator, no LangGraph, deterministic text generation, Reddit optionality,
+migration 0006 audit index, `agent_workflows`, workflow endpoints, the two
+equivalent orchestrators (deterministic default, opt-in LangGraph via
+`AGENTIC_ENGINE`), deterministic text generation, Reddit optionality,
 synchronous architecture, current backend baseline 238, and prototype isolation.
 
 Preserve historical numbers when they explicitly describe past phases. Update
@@ -1379,7 +1407,7 @@ Known local restore tag:
 baseline-pre-postgresql
 
 Production backend:
-414 passed
+435 passed
 0 failed
 2 warnings
 
@@ -1396,13 +1424,16 @@ Migration head:
 0009
 
 Agent system:
-custom deterministic orchestrator
+two equivalent orchestrators — custom deterministic runner (default) and
+an opt-in LangGraph StateGraph runner; neither contains an LLM
 
 LLM:
 optional (deterministic fallback always available; opt-in via LLM_PROVIDER)
 
 LangGraph:
-not used
+available as an opt-in orchestrator via AGENTIC_ENGINE=langgraph
+(no LLM, no checkpointer, no tool-calling; durable state stays in
+agent_workflows)
 
 Collection:
 controlled and sequential (process-level serialization retained;

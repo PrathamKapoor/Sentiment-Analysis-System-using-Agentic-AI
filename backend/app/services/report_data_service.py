@@ -69,7 +69,14 @@ def gather_report_data(
     if "topicAnalysis" in sections:
         topics = topic_service.list_topics(project.id)
         if topics:
-            data["topicAnalysis"] = [{"topicName": t.name, "reviewCount": t.review_count} for t in topics]
+            # list_topics() returns serialised dicts (Topic.to_dict), so this
+            # must be key access, not attribute access. Both renderers read
+            # sections_data["topicAnalysis"] entries as dicts with exactly
+            # these two keys (excel_report_service.py, pdf_report_service.py).
+            data["topicAnalysis"] = [
+                {"topicName": t["topicName"], "reviewCount": t["reviewCount"]}
+                for t in topics
+            ]
         else:
             skipped.append("topicAnalysis")
 
@@ -121,11 +128,21 @@ def gather_report_data(
         sentiment = data.get("sentimentDistribution")
         aspects = data.get("aspectSentiment")
         if sentiment and aspects:
-            dominant = max(sentiment["positive"], sentiment["negative"], sentiment["neutral"], key=lambda x: x["count"]) if sentiment else None
+            # sentiment_service.get_summary() returns each bucket as
+            # {"count", "percentage"} with no "label" key, so the winning
+            # label is the dict key itself, not a field on the value.
+            dominant_label, dominant = max(
+                (
+                    ("positive", sentiment["positive"]),
+                    ("negative", sentiment["negative"]),
+                    ("neutral", sentiment["neutral"]),
+                ),
+                key=lambda kv: kv[1]["count"],
+            )
             top_aspect = aspects[0]["name"] if aspects else None
             data["conclusion"] = (
                 f"Based on {sentiment['analysedReviews']} reviews, the dominant sentiment is "
-                f"{dominant['label']} ({dominant['percentage']}%). The most-discussed aspect is "
+                f"{dominant_label} ({dominant['percentage']}%). The most-discussed aspect is "
                 f"\"{top_aspect}\"."
             )
         else:

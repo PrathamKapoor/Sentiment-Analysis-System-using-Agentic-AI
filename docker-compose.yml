@@ -100,6 +100,10 @@ services:
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-20}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-512}
       SENTIMENT_ENGINE: ${SENTIMENT_ENGINE:-vader}
+      # Which orchestrator walks a workflow. "deterministic" (default) is the
+      # plain-Python runner; "langgraph" is the equivalent StateGraph runner.
+      # Neither contains an LLM.
+      AGENTIC_ENGINE: ${AGENTIC_ENGINE:-deterministic}
     ports:
       - "5000:5000"
     volumes:

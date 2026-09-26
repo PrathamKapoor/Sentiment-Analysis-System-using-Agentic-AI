@@ -6,6 +6,8 @@ tenant/permission enforcement belongs in one place).
 """
 from datetime import datetime, timezone
 
+from flask import current_app
+
 from app.extensions import db
 from app.errors.exceptions import ValidationError, ConflictError, ForbiddenError, NotFoundError
 from app.models import AgentWorkflow, AiSummary
@@ -22,6 +24,36 @@ _TERMINAL_STATUS_ACTION = {
     "failed": "workflow.failed",
     "waiting_for_approval": "workflow.waiting_for_approval",
 }
+
+
+def _active_orchestrator():
+    """Return the orchestrator module selected by AGENTIC_ENGINE.
+
+    "deterministic" (default) is the original plain-Python for-loop runner.
+    "langgraph" is the StateGraph implementation. Both are step-for-step
+    equivalent and neither contains an LLM — this choice only affects how the
+    workflow is walked, never what an agent computes.
+
+    The LangGraph module is imported lazily so that the default
+    (deterministic) path has no import-time dependency on it, and so a broken
+    or missing LangGraph install can never take down the production runner.
+    """
+    engine = (current_app.config.get("AGENTIC_ENGINE") or "deterministic").lower()
+    if engine == "langgraph":
+        try:
+            from app.services.agents import langgraph_orchestrator
+
+            return langgraph_orchestrator
+        except ImportError:
+            # Fail safe and loudly: fall back to the deterministic runner
+            # rather than erroring the request, but leave a trace so the
+            # misconfiguration is discoverable.
+            current_app.logger.exception(
+                "AGENTIC_ENGINE=langgraph but the LangGraph orchestrator could "
+                "not be imported; falling back to the deterministic runner."
+            )
+            return orchestrator
+    return orchestrator
 
 
 def _build_context(project, actor_user_id, membership, workflow_id):
@@ -72,7 +104,9 @@ def start_workflow(project, actor_user_id, membership, workflow_type, options, i
 
     context = _build_context(project, actor_user_id, membership, workflow.id)
     try:
-        step_results, overall_status = orchestrator.run_workflow(workflow_type, context, options)
+        step_results, overall_status = _active_orchestrator().run_workflow(
+            workflow_type, context, options
+        )
     except Exception:
         # Every individual agent already catches its own exceptions
         # (BaseAgent.execute -> "failed" AgentResult) — this only catches a

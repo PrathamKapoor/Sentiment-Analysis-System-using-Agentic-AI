@@ -40,6 +40,25 @@ Flask-Limiter==4.1.1
 # version runtime-verified against Redis server 5.0.14.1.
 redis==7.1.1
 
+# --- Agentic orchestration: LangGraph (opt-in) ------------------------------
+# Provides the StateGraph implementation in
+# app/services/agents/langgraph_orchestrator.py, selected with
+# AGENTIC_ENGINE=langgraph. The default engine remains the original
+# plain-Python orchestrator in app/services/agents/orchestrator.py, and
+# the two are step-for-step equivalent (tests/test_langgraph_orchestrator.py).
+#
+# There is no LLM here and no model provider dependency: LangGraph supplies
+# the graph/state-machine machinery only. The nine agent nodes call the same
+# existing services, so no agent gains a new tool, and durable workflow
+# state stays in the `agent_workflows` table rather than a LangGraph
+# checkpointer (AGENTS.md §13).
+#
+# Note: `langchain-core` is a transitive dependency of langgraph. Nothing in
+# this project imports `langchain` or `langchain-*` directly, and no
+# LangSmith/tracing is enabled (LANGCHAIN_TRACING_V2 is never set), so no
+# telemetry leaves the process.
+langgraph==1.2.12
+
 # Production WSGI servers. Gunicorn covers Linux containers; waitress
 # covers Windows hosts. Both are included so the same requirements file
 # works for the dev workstation and the container image.

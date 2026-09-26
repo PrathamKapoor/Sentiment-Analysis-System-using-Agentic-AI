@@ -13,7 +13,7 @@
 [![Python](https://img.shields.io/badge/Python-3.13-3776ab?style=flat-square&logo=python)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.1-000000?style=flat-square&logo=flask)](https://flask.palletsprojects.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-4169e1?style=flat-square&logo=postgresql)](https://www.postgresql.org/)
-[![Tests](https://img.shields.io/badge/Tests-414%20Passing-10b981?style=flat-square)](#testing--verification)
+[![Tests](https://img.shields.io/badge/Tests-435%20Passing-10b981?style=flat-square)](#testing--verification)
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple?style=flat-square)](./LICENSE)
 [![Status: Work in Progress](https://img.shields.io/badge/Status-Work%20in%20Progress-orange?style=flat-square)](#project-status--work-in-progress)
 
@@ -29,11 +29,15 @@
 >
 > This repository is an **actively developed academic research system**, not a finished commercial product. Read this before judging it.
 >
-> **The agentic orchestration layer is currently a hand-written deterministic orchestrator — effectively a stub — not a real LLM-driven agent framework.**
+> **The agentic orchestration layer has no LLM in its control loop. That is a deliberate design property, not an oversight.**
 >
-> - **Today:** nine thin agent wrappers drive nine existing, fully-tested services through a fixed, inspectable step order (`backend/app/services/agents/orchestrator.py`). There is **no LLM in the control loop** — the system is fully functional and fully offline, by design.
-> - **Planned for the actual deployment:** **LangGraph** for agent orchestration, which will replace the stub orchestrator with a real graph-based state machine (conditional edges, checkpointed state, human-in-the-loop interrupts, and tool-calling). See [Agentic Orchestration: current stub vs. planned LangGraph](#agentic-orchestration-current-stub-vs-planned-langgraph) for exactly what changes and what deliberately will not.
-> - **Also still open:** background/async workflow execution, a real Reddit API client, a persistent collection scheduler, and a real LLM provider (the current provider is optional and only used for one report section).
+> - **Two interchangeable engines ship side by side**, selected with `AGENTIC_ENGINE`:
+>   - `deterministic` *(default)* — a plain-Python for-loop runner (`backend/app/services/agents/orchestrator.py`).
+>   - `langgraph` — a real `StateGraph` with conditional edges (`backend/app/services/agents/langgraph_orchestrator.py`).
+>
+>   Both call the **same nine existing services** and are pinned step-for-step equivalent by `tests/test_langgraph_orchestrator.py`. The switch changes *how a workflow is walked*, never *what an agent computes*.
+> - **Still planned for the actual deployment:** putting a model in the loop (tool-calling agents, a planner, `interrupt()`-based human approval) and background/async execution. Neither exists yet. See [Agentic Orchestration: the two engines, and what is still missing](#agentic-orchestration-the-two-engines-and-what-is-still-missing).
+> - **Also still open:** a real Reddit API client, a persistent collection scheduler, and a real LLM provider (the current provider is optional and only used for one report section).
 >
 > Everything marked ✅ below has been **executed and verified**; everything marked 🚧 is documented but not built. The [Limitations & Known Gaps](#limitations--known-gaps) section is deliberately honest about which is which.
 
@@ -106,7 +110,7 @@ Product and CX teams routinely need to answer questions like *"is delivery or pr
 - **Bounded budgets:** timeout, inter-request delay, max pages, max records, max response size, max redirects, max retries. Only genuinely transient failures (timeout, `429` with `Retry-After`, transient 5xx) are ever retried.
 - **Never evades** CAPTCHAs, sign-in walls, or anti-bot systems — it detects them and stops.
 
-### Agentic Orchestration (current stub)
+### Agentic Orchestration (two engines, no LLM)
 - **Nine thin agents** — Data Collection, Data Quality, Sentiment, Topic, Aspect, Summary, Recommendation, Alert, Report — each wrapping exactly one existing service. No agent reimplements business logic.
 - **Six workflow types:** `FULL_ANALYSIS`, `COLLECT_AND_ANALYSE`, `REFRESH_ANALYSIS`, `EXECUTIVE_BRIEF`, `ALERT_RECHECK`, `REPORT_REFRESH`, each with sensible default steps and per-request overrides.
 - **Durable, resumable state** in the `agent_workflows` table, including a `waiting_for_approval` state that survives a process restart.
@@ -198,8 +202,9 @@ flowchart TD
 | **Collection** | `requests` 2.33 + BeautifulSoup4 4.14 | Static HTML only — no Playwright/Selenium/Scrapy |
 | **Security** | `urllib3` 2.7 (connect-time hook), Flask-Limiter 4.1, `redis` 7.1 | SSRF guard, rate limiting, shared revocation state |
 | **Reports** | ReportLab 5.0, openpyxl 3.1.5 | PDF + Excel rendering, real data types |
+| **Orchestration** | Custom deterministic runner **or** LangGraph 1.2 `StateGraph` | Selectable via `AGENTIC_ENGINE`; **no LLM in either path** |
 | **Serving** | Gunicorn (containers), Waitress (Windows host) | Production WSGI |
-| **Testing** | pytest 9.1 | 414 backend tests + 20 isolated prototype tests |
+| **Testing** | pytest 9.1 | 435 backend tests + 20 isolated prototype tests |
 
 ---
 
@@ -313,20 +318,29 @@ The repo ships a synthetic demo dataset at `database/demo_dataset.csv` — 28 re
 
 ---
 
-## Agentic Orchestration: Current Stub vs. Planned LangGraph
+## Agentic Orchestration: the two engines, and what is still missing
 
 This is the most important thing to understand about the project's roadmap, so it is stated plainly rather than buried.
 
 ### What exists today (✅ working, fully tested)
 
-`backend/app/services/agents/orchestrator.py` is a **deterministic, hand-written orchestrator**:
+Two orchestrators, one behaviour. `AGENTIC_ENGINE` picks which one walks the workflow:
+
+| `AGENTIC_ENGINE` | Module | Shape |
+|---|---|---|
+| `deterministic` *(default)* | `app/services/agents/orchestrator.py` | plain-Python `for` loop over `STEP_ORDER` |
+| `langgraph` | `app/services/agents/langgraph_orchestrator.py` | `StateGraph` with conditional edges |
+
+Both resolve the same step selection, call the same agents, apply the same failure-blocking, and reduce to the same terminal status. `tests/test_langgraph_orchestrator.py` asserts equivalence for **every** workflow type, with real seeded reviews so the comparison covers actual agent execution rather than just routing.
+
+Step selection still comes from one place — `resolve_steps()` in the deterministic module — so the two engines cannot drift on which steps run or in what order:
 
 ```
-STEP_ORDER = (data_collection → data_quality → sentiment → topic
-              → aspect → summary → recommendation → alert → report)
+data_collection → data_quality → sentiment → topic → aspect
+                → summary → recommendation → alert → report
 ```
 
-It resolves which steps a workflow type needs, iterates them in a fixed order, calls `AGENT_REGISTRY[step]().execute(context)`, blocks downstream steps when a *critical* agent (only Data Quality) fails, and reduces step results into one terminal status. Each of the nine agents is a ~10–25 line wrapper that calls exactly one existing service:
+Each of the nine agents is a ~10–25 line wrapper around exactly one existing service:
 
 ```
 SentimentAgent  →  SentimentService  →  VADER
@@ -334,33 +348,45 @@ TopicAgent      →  TopicService      →  TF-IDF + MiniBatchKMeans
 ReportAgent     →  ReportService     →  ReportLab / openpyxl
 ```
 
-**This is a stub in the sense that matters: there is no model making decisions.** No LLM chooses a tool, plans a next step, or loops. The system is fully functional and fully deterministic *because* of this, not in spite of it — and it is genuinely the right choice for a security-sensitive, auditable system. But it is not "agentic" in the LLM sense.
+**Neither engine has a model making decisions.** No LLM chooses a tool, plans a next step, or loops. The system is fully functional and deterministic *because* of this, not in spite of it — and that is the right trade for a security-sensitive, auditable system.
 
-**Verified properties of the current orchestrator:**
+**What the LangGraph engine actually adds:** a real compiled graph (11 nodes — `plan`, nine `run_<agent>` nodes, `finalize`), conditional edges so the next hop is decided from state rather than from a hardcoded sequence, and per-node state that is inspectable and serialisable — the prerequisite for checkpointed resume.
+
+**What it deliberately does not add:**
+
+- **No new tool surface.** There is exactly one graph node per registered agent, asserted by a test. LangGraph cannot call anything the deterministic runner could not.
+- **No new persistence.** A LangGraph checkpointer is *not* attached. Durable workflow state stays in the `agent_workflows` table (AGENTS.md §13 forbids moving it to Python-only memory), and a `SqliteSaver`/`PostgresSaver` would mean a 26th table plus a second source of truth. The approval gate is therefore still the existing `waiting_for_approval` column and the existing approve/resume/reject endpoints, not `interrupt()`.
+- **No background execution.** The graph is still invoked synchronously inside the HTTP request.
+- **No telemetry.** `langchain-core` arrives as a transitive dependency, but nothing imports `langchain-*` and `LANGCHAIN_TRACING_V2` is never set, so no trace data leaves the process.
+
+If `AGENTIC_ENGINE=langgraph` is set but the import fails, the request falls back to the deterministic runner and logs the failure rather than erroring — a broken optional path can never take the API down.
+
+**Verified properties (identical under both engines):**
 
 | Property | Where |
 |---|---|
-| Runs synchronously, in-request, blocking | `workflow_service.py:75` |
-| Persists durable state to `agent_workflows` before any work | `workflow_service.py:60-71` |
-| Cannot get permanently stuck `running` on an orchestration bug | `workflow_service.py:76-88` |
-| Idempotent on `(project_id, idempotency_key)` | `workflow_service.py:53-58` |
-| Human approval gate set/cleared correctly | `report_agent.py:40-51` → `workflow_service.py:128-196` |
-| Agents can only reach 9 named internal services | `docs/agentic_architecture.md` |
+| Runs synchronously, in-request, blocking | `workflow_service.py` |
+| Persists durable state to `agent_workflows` before any work | `workflow_service.py` |
+| Cannot get permanently stuck `running` on an orchestration bug | `workflow_service.py` outer failure handling |
+| Idempotent on `(project_id, idempotency_key)` | `workflow_service.py` |
+| Human approval gate set/cleared correctly | `report_agent.py` → `workflow_service.py` |
+| Critical-failure blocking preserved | `tests/test_langgraph_orchestrator.py` |
+| Agents can only reach 9 named internal services | `tests/test_langgraph_orchestrator.py`, `docs/agentic_architecture.md` |
 | No `eval`, `exec`, `subprocess`, or dynamic import anywhere in `backend/app` | repo-wide search |
 
-### What the actual deployment will add (🚧 LangGraph)
+### What the actual deployment will still add (🚧)
 
-The production target is to **replace the fixed step loop with a real LangGraph state machine**, gaining:
+The graph exists; the *model* does not. Still to come:
 
-- **A genuine graph** — conditional edges instead of a hardcoded tuple, so a step's outcome can actually change the path taken.
-- **Checkpointed, resumable state** — graph state persisted per node, so a workflow interrupted mid-run resumes from the exact node rather than from the top.
+- **Tool-calling agents** — each node becomes a tool-equipped node rather than a hardcoded function call.
+- **A planner / conditional branching driven by the LLM** — so an outcome can change the path in a model-directed way, not just via the fixed blocking rules.
 - **Native human-in-the-loop interrupts** — `interrupt()` semantics instead of a manually-persisted `waiting_for_approval` column.
-- **Tool-calling agents** — each agent becomes a tool-equipped node rather than a hardcoded function call.
-- **Bounded retry / conditional branching** — declarative rather than hand-maintained.
+- **Checkpointed, resumable execution** — requires deciding where graph checkpoints live, given the `agent_workflows` constraint above.
+- **Background / async execution** — a queue, so a workflow does not have to finish inside one HTTP request.
 
 **What will deliberately NOT change:** the analytical services stay deterministic; the permission model stays backend-enforced; tenant isolation stays in the decorators; the human approval gate stays mandatory; and the LLM will still never be allowed to invent a number. LangGraph replaces *control flow*, not *trust boundaries*.
 
-> Until that migration lands, this repository makes **no claim** of being an LLM-agent system. See [`docs/phase7_deferred_issues.md`](./docs/phase7_deferred_issues.md) (`PHASE7_DEFERRED_LANGGRAPH`) and [`docs/agentic_architecture.md`](./docs/agentic_architecture.md).
+> This repository makes **no claim** of being an LLM-agent system. See [`docs/phase7_deferred_issues.md`](./docs/phase7_deferred_issues.md) (`PHASE7_DEFERRED_LANGGRAPH`) and [`docs/agentic_architecture.md`](./docs/agentic_architecture.md).
 
 ### The optional LLM (a genuinely different thing)
 
@@ -416,6 +442,7 @@ The canonical templates are [`backend/.env.example`](./backend/.env.example) and
 | `SCRAPER_MAX_REDIRECTS` | `5` | Redirect hops, each independently SSRF-validated |
 | `SCRAPER_USER_AGENT` | identifiable bot | User agent used for robots.txt checks |
 | `SCRAPER_ALLOW_PRIVATE_TARGETS` | `false` | **DEV/TEST ONLY.** Disables the private-IP block. Environment-only — never request-, API-, or agent-controllable |
+| `AGENTIC_ENGINE` | `deterministic` | Which orchestrator walks a workflow: `deterministic` (plain-Python loop) or `langgraph` (equivalent `StateGraph`). Picks the *runner*, never what an agent computes. Unknown values fall back to `deterministic`. No LLM either way. |
 
 ### Optional LLM (off by default)
 
@@ -444,7 +471,7 @@ REVOCATION_STORE_URL=redis://localhost:6379/1
 ## Testing & Verification
 
 ```bash
-# Backend — 414 tests, in-memory SQLite, no external services required
+# Backend — 435 tests, in-memory SQLite, no external services required
 cd backend
 python -m pytest -v
 ```
@@ -465,7 +492,7 @@ python -m pytest -v
 
 | Verification | Result |
 |---|---|
-| Backend pytest suite | ✅ **414 passed, 0 failed, 2 warnings** |
+| Backend pytest suite | ✅ **435 passed, 0 failed, 2 warnings** |
 | Experimental prototype suite | ✅ **20 passed** |
 | Frontend Vite production build | ✅ **PASS** (159 modules) |
 | Migration chain `0001 → 0009` on real PostgreSQL 18.6 (upgrade → downgrade → re-upgrade) | ✅ Verified via `scripts/audit_migration_postgres.py` |
@@ -598,14 +625,14 @@ Sentiment-Analysis-System-using-Agentic-AI/
 │   │   ├── errors/              # Typed exceptions + JSON error handlers (no traceback leaks)
 │   │   ├── utils/               # Response envelopes, cross-DB GUID type
 │   │   └── services/
-│   │       ├── agents/          # 9 thin agents + orchestrator (STUB — see above) + base
+│   │       ├── agents/          # 9 thin agents + both orchestrators (deterministic, LangGraph) + base
 │   │       ├── collectors/      # SSRF guard, robots.txt, static HTML, Amazon.in, Flipkart, Reddit
 │   │       ├── llm/             # Optional LLM provider (deterministic default) + prompt builder
 │   │       └── *.py             # Sentiment, topic, aspect, keyword, trend, recommendation,
 │   │                            # summary, alert, report, collection, dataset, storage, audit
 │   ├── migrations/versions/     # 0001 → 0009 (single accepted chain)
 │   ├── scripts/                 # Migration audit, smoke, load, backup & distributed drills
-│   ├── tests/                   # 44 test modules — 414 tests
+│   ├── tests/                   # 40 test modules — 435 tests
 │   ├── fixtures/                # 70-row hand-labelled sentiment benchmark
 │   ├── .env.example             # Committed template, placeholders only
 │   ├── requirements.txt         # Pinned dependencies
@@ -670,14 +697,15 @@ Stated plainly, because a system that hides its limits is harder to trust than o
 
 ### 🚧 Not built, not claimed
 
-- **LangGraph orchestration** — the orchestrator is a deterministic stub. This is the headline planned change.
+- **An LLM in the orchestration loop** — the LangGraph engine ships and is verified, but no node calls a model. There is no planner, no tool-calling, no `interrupt()`. The graph is real; the agent reasoning is still deterministic.
+- **Checkpointed / resumable graph execution** — no LangGraph checkpointer is attached, because durable state stays in `agent_workflows` and a saver would add a 26th table. Resume is still the existing `waiting_for_approval` → approve → resume path.
 - **Background / async workflow execution** — a workflow runs to completion inside one HTTP request. There is no queue, no worker, no scheduler.
 - **A real Reddit API client** — `PublicRedditCollector` always reports the source unavailable, even with credentials configured. The OAuth client itself is not implemented. Reddit is never scraped as HTML.
 - **A persistent collection scheduler** — collection is manual/on-demand only.
 - **Real S3 transfers** — the adapter is implemented and mock-tested; no live bucket was exercised.
 - **The containerized deployment path is not runtime-verified** — no Docker daemon on the verification host.
 - **A complete end-to-end browser walkthrough of every page is not yet done.**
-- **Two dead/stub code paths** exist in the agent layer: `app/services/agents/provider.py` is imported by nothing (superseded by `app/services/llm/`), and the LLM is unreachable from any workflow.
+- **One dead code path** exists in the agent layer: `app/services/agents/provider.py` is imported by nothing (superseded by `app/services/llm/`). The optional LLM is also unreachable from any workflow by design.
 - **`resume` can complete without producing a report** if the resuming user lacks `generate_report` (the step is skipped rather than re-gating).
 
 ### Deliberate non-goals

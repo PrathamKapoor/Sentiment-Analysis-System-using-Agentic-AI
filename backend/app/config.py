@@ -62,6 +62,19 @@ class BaseConfig:
     # If Phase 7 orchestration ever needs a "safe test mode," add a
     # separate, narrowly-scoped mechanism — do not repurpose this flag.
     SCRAPER_ALLOW_PRIVATE_TARGETS = os.environ.get("SCRAPER_ALLOW_PRIVATE_TARGETS", "false").lower() == "true"
+    # Agentic orchestration engine selection.
+    #   "deterministic" (default) - the original plain-Python for-loop
+    #                              orchestrator in services/agents/orchestrator.py
+    #   "langgraph"               - the StateGraph implementation in
+    #                              services/agents/langgraph_orchestrator.py
+    # Both are step-for-step equivalent and neither involves an LLM. This
+    # selects *how* the workflow is walked, never *what* the agents compute.
+    # Invalid values fall back to "deterministic" rather than failing the
+    # request, so a typo can never take the API down.
+    AGENTIC_ENGINE = (os.environ.get("AGENTIC_ENGINE") or "deterministic").strip().lower()
+    if AGENTIC_ENGINE not in ("deterministic", "langgraph"):
+        AGENTIC_ENGINE = "deterministic"
+
     # Discovery is metadata-only and disabled by default. Runtime execution
     # remains limited to manually reviewed entries in RUNTIME_REGISTRY.
     SOURCE_FALLBACK_DISCOVERY_MODE = os.environ.get("SOURCE_FALLBACK_DISCOVERY_MODE", "CURATED_ONLY")
