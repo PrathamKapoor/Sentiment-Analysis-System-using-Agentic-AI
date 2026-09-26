@@ -44,6 +44,18 @@ issue publicly until it has been triaged and fixed.
 - **Auth tokens** — JWT with server-side revocation
   (`app/services/token_service.py`, fail-closed against Redis outage);
   rate limiting on login/register/report creation (`app/limiter.py`).
+- **Client routing** — `react-router-dom` upgraded 6.x → 7.18.4 to clear
+  GHSA-wrjc-x8rr-h8h6 (open redirect via backslash in `<Link>` /
+  `useNavigate`) and GHSA-337j-9hxr-rxhxg (constructor injection via
+  `deserializeErrors()` in SSR hydration). The app is a client-rendered SPA
+  and never uses SSR hydration or `deserializeErrors`, so the second was not
+  reachable here, but both are cleared. Verified in a real browser: all
+  authenticated routes, nested routes and client-side navigation still work
+  with 0 console and 0 page errors.
+- **Dependency hygiene** — `pip-audit -r requirements.txt` reports no known
+  vulnerabilities (16 advisories across 5 packages were cleared: Flask,
+  Flask-CORS, marshmallow, python-dotenv, pytest). `npm audit` reports 0
+  vulnerabilities in both the production and dev trees.
 
 ## Scope notes
 

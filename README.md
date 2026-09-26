@@ -190,7 +190,7 @@ flowchart TD
 | Layer | Technology | Purpose |
 |---|---|---|
 | **Framework** | Flask 3.1 (application factory) | REST API, blueprint routing, CLI commands |
-| **Frontend** | React 18, Vite 6, React Router, Bootstrap 5 | 18 authenticated pages + auth shell |
+| **Frontend** | React 18, Vite 6, React Router 7, Bootstrap 5 | 18 authenticated pages + auth shell |
 | **Charts** | Chart.js (`react-chartjs-2`) | Sentiment doughnut, trends line, comparison bars |
 | **ORM & Database** | Flask-SQLAlchemy 2.x, Alembic (Flask-Migrate) | 25 tables, 9-migration chain `0001 → 0009` |
 | **Database** | PostgreSQL 18 (psycopg v3), SQLite for tests/dev fallback | UUID primary keys throughout, cross-DB `GUID` type |
@@ -494,14 +494,18 @@ python -m pytest -v
 |---|---|
 | Backend pytest suite | ✅ **435 passed, 0 failed, 2 warnings** |
 | Experimental prototype suite | ✅ **20 passed** |
-| Frontend Vite production build | ✅ **PASS** (159 modules) |
+| Frontend Vite production build | ✅ **PASS** (167 modules) |
+| Python dependency audit | ✅ **`pip-audit` — no known vulnerabilities** (was 16 across 5 packages) |
+| Node dependency audit | ✅ **`npm audit` — 0 vulnerabilities**, production and dev |
+| React Router 6 → 7 migration | ✅ Real-browser verified: all 18 authenticated routes, nested project workspace, `NavLink`/`Link` client-side navigation, against a live backend and a real login — 0 console errors, 0 page errors |
 | Migration chain `0001 → 0009` on real PostgreSQL 18.6 (upgrade → downgrade → re-upgrade) | ✅ Verified via `scripts/audit_migration_postgres.py` |
 | Full user workflow over real HTTP in production mode | ✅ Verified via `scripts/phase12_smoke.py` |
 | Multi-instance JWT revocation + distributed rate limiting (2 processes + real Redis) | ✅ Verified via `scripts/phase14_distributed_verification.py` |
 | Operator `pg_dump`/`pg_restore` backup + destroy-restore drill | ✅ Verified via `scripts/phase14_pg_dump_drill.py` |
 | Containerized deployment path | 🚧 **Not runtime-verified** — no Docker daemon on the verification host; Dockerfiles/compose statically validated only |
 | Real S3 object storage | 🚧 Interface implemented and mock-tested; no live bucket transfer verified |
-| End-to-end browser walkthrough of every page | 🚧 **Not yet completed** — highest-priority remaining item |
+| End-to-end browser walkthrough of every page | 🚧 **Partially done** — routing is real-browser verified (above); the *content* of every page under live data is not yet walked |
+| Login page mouse-clickability | 🚧 **Known UI defect** — the decorative `.lamp-fixture`/`.lamp-pull` overlays intercept pointer events over the login panel's submit button. Pre-existing, unrelated to routing; the form submits fine with the keyboard (Enter). See [Limitations](#limitations--known-gaps). |
 
 ### Why the test suite doesn't need PostgreSQL
 
@@ -697,6 +701,7 @@ Stated plainly, because a system that hides its limits is harder to trust than o
 
 ### 🚧 Not built, not claimed
 
+- **The login submit button cannot be clicked with a mouse.** The decorative lamp fixture (`.lamp-fixture`, and the `.lamp-pull` cord control inside it) is absolutely positioned over the login panel and, unlike the other decorative layers, has no `pointer-events: none`, so it swallows the click. The form still submits with **Enter** from either field, so the flow works — but a mouse-only user cannot click *Continue*. This is a pre-existing CSS stacking bug in `src/styles/app.css`, unrelated to routing, and is **not fixed** here because it is a UI change outside the scope of the dependency upgrade. The fix is to add `pointer-events: none` to `.lamp-fixture` (keeping it on `.lamp-pull`, which is itself an interactive control).
 - **An LLM in the orchestration loop** — the LangGraph engine ships and is verified, but no node calls a model. There is no planner, no tool-calling, no `interrupt()`. The graph is real; the agent reasoning is still deterministic.
 - **Checkpointed / resumable graph execution** — no LangGraph checkpointer is attached, because durable state stays in `agent_workflows` and a saver would add a 26th table. Resume is still the existing `waiting_for_approval` → approve → resume path.
 - **Background / async workflow execution** — a workflow runs to completion inside one HTTP request. There is no queue, no worker, no scheduler.
