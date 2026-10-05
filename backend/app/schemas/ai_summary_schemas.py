@@ -5,8 +5,8 @@ from app.services.summary_service import SUMMARY_TYPES
 
 class CreateSummarySchema(Schema):
     summaryType = fields.String(load_default="overall", validate=validate.OneOf(SUMMARY_TYPES))
-    dateFrom = fields.Date(required=True)
-    dateTo = fields.Date(required=True)
+    dateFrom = fields.Date(required=False, allow_none=True, load_default=None)
+    dateTo = fields.Date(required=False, allow_none=True, load_default=None)
 
 
 class UpdateSummarySchema(Schema):

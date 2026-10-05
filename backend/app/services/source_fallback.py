@@ -174,9 +174,15 @@ class RedditOfficialDiscussionAdapter(SourceAdapter):
         if not token:
             raise FallbackAdapterError("API_CREDENTIALS_REQUIRED")
         headers = {"Authorization": f"Bearer {token}", "User-Agent": self.user_agent}
-        posts = self._request_json("GET", self._search_url, headers=headers,
-                                   params={"q": aliases[0], "limit": min(10, MAX_ALIASES_PER_API), "sort": "relevance", "raw_json": 1})
-        children = ((posts.get("data") or {}).get("children") or []) if isinstance(posts, dict) else []
+        children = []
+        # Search a small fixed number of validated entity terms. LLM-suggested
+        # phrases remain query data; the endpoint host/path stay hard-coded.
+        for query in list(dict.fromkeys(aliases))[:MAX_ALIASES_PER_API]:
+            posts = self._request_json("GET", self._search_url, headers=headers,
+                                       params={"q": query[:200], "limit": 10, "sort": "relevance", "raw_json": 1})
+            children.extend(((posts.get("data") or {}).get("children") or []) if isinstance(posts, dict) else [])
+            if not budget.may_continue():
+                break
         comments = []
         # Bounded by the shared source budget and a small fixed post ceiling.
         for child in children[:3]:
@@ -232,13 +238,28 @@ class ApprovedSourceRegistry:
 
 def resolve_entity(source):
     """Deterministic, inert entity resolver based on configured project data."""
-    text = " ".join(filter(None, [getattr(source.project, "product_or_topic", None), getattr(source.project, "name", None)])).strip()
+    project = source.project
+    resolved = None
+    if getattr(project, "id", None) is not None:
+        from flask import has_app_context
+        if has_app_context():
+            from app.services.entity_resolver import resolve_project_entity
+            resolved = resolve_project_entity(project, getattr(source, "url", None))
+    if resolved is None:
+        fallback_name = (getattr(project, "product_or_topic", None) or "").strip()
+        fallback_name = fallback_name or (getattr(project, "name", None) or "Requested product").strip()
+        resolved = {"canonicalName": fallback_name, "aliases": [fallback_name]}
+    text = str(resolved.get("canonicalName") or "").strip()
     text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
     text = re.sub(r"\s+", " ", text)[:200]
-    # Deliberate common product canonicalisation; no URL/catalog text is executed.
-    if re.search(r"samsung\s+(galaxy\s+)?s25", text, re.I):
-        return "Samsung Galaxy S25", ["Samsung Galaxy S25", "Samsung S25", "Galaxy S25"]
-    return text or "Requested product", [text or "Requested product"]
+    aliases = [text]
+    for alias in resolved.get("aliases", []):
+        if isinstance(alias, str):
+            alias = re.sub(r"[\x00-\x1f\x7f]", " ", alias)
+            alias = re.sub(r"\s+", " ", alias).strip()[:200]
+            if alias and alias.casefold() not in {value.casefold() for value in aliases}:
+                aliases.append(alias)
+    return text or "Requested product", aliases[:MAX_ALIASES_PER_API]
 
 
 def discovery_queries(entity):
@@ -273,9 +294,18 @@ def _relevant(record, aliases):
     return len(text) >= 12 and any(alias.lower() in haystack for alias in aliases)
 
 
-def run_fallback(source, direct_status, registry, *, discovery_mode="CURATED_ONLY", connectors=()):
+def run_fallback(source, direct_status, registry, *, discovery_mode="CURATED_ONLY", connectors=(), search_terms=None):
     """Single-pass Level 2. No recursion, no generic HTTP, no auto-approval."""
     entity, aliases = resolve_entity(source)
+    base_aliases = list(aliases)
+    aliases = [base_aliases[0]] if base_aliases else []
+    for term in search_terms or []:
+        if isinstance(term, str):
+            term = re.sub(r"[\x00-\x1f\x7f]", " ", term)
+            term = re.sub(r"\s+", " ", term).strip()[:200]
+            if term and term.casefold() not in {item.casefold() for item in aliases}:
+                aliases.append(term)
+    aliases = aliases[:MAX_ALIASES_PER_API]
     trace = {"requestedSource": source.type, "requestedUrl": source.url, "canonicalEntity": entity,
              "directStatus": direct_status, "fallbackUsed": True, "discoveryMode": discovery_mode,
              "catalogCandidates": 0, "approvedCandidates": 0, "attempts": []}

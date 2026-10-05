@@ -152,6 +152,119 @@ def get_trends(project_id):
     return success_response(trend_service.get_trends(project_id, granularity, filters))
 
 
+@analysis_bp.route("/competitors", methods=["GET"])
+@project_access_required
+@permission_required("view_reviews")
+def get_competitor_intelligence(project_id):
+    from app.services.competitor_intelligence_service import get_competitor_intelligence
+
+    return success_response(get_competitor_intelligence(project_id))
+
+
+@analysis_bp.route("/feedback-categories", methods=["GET"])
+@project_access_required
+@permission_required("view_reviews")
+def get_project_feedback_categories(project_id):
+    from app.services.feedback_intelligence_service import get_feedback_categories
+
+    return success_response(get_feedback_categories(project_id))
+
+
+@analysis_bp.route("/source-statistics", methods=["GET"])
+@project_access_required
+@permission_required("view_reviews")
+def get_project_source_statistics(project_id):
+    from app.services.source_statistics_service import get_source_statistics
+    return success_response(get_source_statistics(project_id))
+
+
+@analysis_bp.route("/emerging-themes", methods=["GET"])
+@project_access_required
+@permission_required("view_reviews")
+def get_project_emerging_themes(project_id):
+    from app.services.temporal_intelligence_service import get_emerging_themes
+    return success_response(get_emerging_themes(
+        project_id, days=request.args.get("days", 7),
+        baseline_days=request.args.get("baselineDays", 7),
+        minimum_increase=request.args.get("minimumIncrease", 1.5),
+    ))
+
+
+@analysis_bp.route("/anomalies", methods=["GET"])
+@project_access_required
+@permission_required("view_reviews")
+def get_project_anomalies(project_id):
+    from app.services.temporal_intelligence_service import get_anomalies
+    return success_response(get_anomalies(
+        project_id, days=request.args.get("days", 7),
+        baseline_days=request.args.get("baselineDays", 7),
+        minimum_increase=request.args.get("minimumIncrease", 1.5),
+    ))
+
+
+@analysis_bp.route("/root-cause-evidence", methods=["GET"])
+@project_access_required
+@permission_required("view_reviews")
+def get_project_root_cause_evidence(project_id):
+    from app.services.root_cause_service import get_root_cause_evidence
+    return success_response(get_root_cause_evidence(
+        project_id, days=request.args.get("days", 7),
+        baseline_days=request.args.get("baselineDays", 7),
+    ))
+
+
+@analysis_bp.route("/source-statistics/duplicates", methods=["GET"])
+@project_access_required
+@permission_required("view_reviews")
+def get_project_duplicate_relationships(project_id):
+    from sqlalchemy.orm import aliased
+    from app.models import ReviewDuplicateLink, Review
+    left = aliased(Review)
+    right = aliased(Review)
+    eligible = lambda model: model.deleted_at.is_(None) & model.is_spam.is_(False) & model.is_duplicate.is_(False)
+    links = ReviewDuplicateLink.query.join(left, left.id == ReviewDuplicateLink.review_id).join(
+        right, right.id == ReviewDuplicateLink.duplicate_review_id
+    ).filter(ReviewDuplicateLink.project_id == project_id, left.project_id == project_id,
+        right.project_id == project_id, eligible(left), eligible(right)).order_by(
+        ReviewDuplicateLink.created_at.desc()
+    ).limit(1000).all()
+    return success_response({"items": [link.to_dict() for link in links], "truncated": len(links) == 1000})
+
+
+@analysis_bp.route("/source-statistics/duplicates/detect", methods=["POST"])
+@project_access_required
+@permission_required("view_reviews")
+def detect_project_duplicate_relationships(project_id):
+    from app.services.duplicate_detection_service import detect_project_duplicates
+    result = detect_project_duplicates(project_id)
+    db.session.commit()
+    return success_response(result, message="Exact duplicate relationships checked")
+
+
+@analysis_bp.route("/evidence/<review_id>", methods=["GET"])
+@project_access_required
+@permission_required("view_reviews")
+def get_project_evidence(project_id, review_id):
+    from app.services.evidence_service import get_evidence
+    return success_response(get_evidence(project_id, review_id))
+
+
+@analysis_bp.route("/security-indicators", methods=["GET"])
+@project_access_required
+@permission_required("view_reviews")
+def get_project_security_indicators(project_id):
+    from app.services.security_intelligence_service import get_project_security_indicators
+    return success_response({"items": get_project_security_indicators(project_id)})
+
+
+@analysis_bp.route("/security-incidents", methods=["GET"])
+@project_access_required
+@permission_required("view_reviews")
+def get_project_security_incident_patterns(project_id):
+    from app.services.security_intelligence_service import correlate_security_signals
+    return success_response({"items": correlate_security_signals(project_id)})
+
+
 # ---- Aspects ----
 # Generation permission: the approved REST API Spec documents no "generate"
 # endpoint for aspects/recommendations at all (pre-dates this phase). No

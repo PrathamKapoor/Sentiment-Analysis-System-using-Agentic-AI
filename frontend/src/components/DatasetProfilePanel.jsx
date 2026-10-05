@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import client from "../api/client";
 import ErrorAlert from "./ErrorAlert";
 
-export default function DatasetProfilePanel({ datasetId }) {
+export default function DatasetProfilePanel({ datasetId, refreshKey = 0 }) {
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState(null);
   const [expandedFlag, setExpandedFlag] = useState(null);
@@ -14,7 +14,7 @@ export default function DatasetProfilePanel({ datasetId }) {
     client.get(`/datasets/${datasetId}/profile`)
       .then((r) => setProfile(r.data.data.profile))
       .catch(setError);
-  }, [datasetId]);
+  }, [datasetId, refreshKey]);
 
   if (error) return <ErrorAlert error={error} onDismiss={() => setError(null)} />;
   if (!profile) return <div className="text-muted small">Loading profile...</div>;

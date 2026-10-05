@@ -175,3 +175,20 @@ def test_failed_identical_file_can_retry_without_new_dataset(client):
     retry = _upload_csv(client, project_id, headers, CRITIC_SHAPED_CSV, "critic.csv")
     assert retry.status_code == 202
     assert retry.get_json()["data"]["datasetId"] == dataset_id
+
+def test_dataset_with_long_url_source_maps_source_name_and_source_url(client):
+    org_id, headers = owner_context(client)
+    project_id = create_project(client, headers, name="URL Source Test")
+    long_url = "https://www.amazon.in/Wayona-Braided-WN3LG1-Syncing-Charging/dp/B07JW9H4J1/ref=sr_1_1?qid=1672909124&s=electronics&sr=1-1"
+    assert len(long_url) > 100
+    csv_content = f"review_text,rating,source\nGreat cable works fine,4.5,{long_url}\n"
+    dataset_id = _upload_csv(client, project_id, headers, csv_content, "amazon_test.csv").get_json()["data"]["datasetId"]
+    client.post(f"/api/v1/datasets/{dataset_id}/map-columns", json={"text": "review_text", "rating": "rating", "source": "source"}, headers=headers)
+    assert client.post(f"/api/v1/datasets/{dataset_id}/validate", headers=headers).status_code == 202
+    assert client.post(f"/api/v1/datasets/{dataset_id}/process", headers=headers).status_code == 202
+    review = Review.query.filter_by(project_id=project_id).first()
+    assert review is not None
+    assert review.source == "Amazon"
+    assert review.source_url == long_url
+    assert len(review.source) <= 100
+

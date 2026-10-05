@@ -18,6 +18,30 @@ def test_create_and_list_source(client):
     assert len(list_resp.get_json()["data"]["items"]) == 1
 
 
+def test_create_source_infers_type_from_url(client):
+    _org_id, headers = owner_context(client)
+    project_id = create_project(client, headers)
+    response = client.post(
+        f"/api/v1/projects/{project_id}/sources",
+        json={"url": "https://www.amazon.in/dp/B012345678"},
+        headers=headers,
+    )
+    assert response.status_code == 201
+    assert response.get_json()["data"]["type"] == "ecommerce"
+
+
+def test_create_github_issues_api_source(client):
+    _org_id, headers = owner_context(client)
+    project_id = create_project(client, headers)
+    response = client.post(
+        f"/api/v1/projects/{project_id}/sources",
+        json={"type": "github_issues", "url": "https://github.com/acme/app"},
+        headers=headers,
+    )
+    assert response.status_code == 201
+    assert response.get_json()["data"]["type"] == "github_issues"
+
+
 def test_invalid_url_rejected(client):
     org_id, headers = owner_context(client)
     project_id = create_project(client, headers)

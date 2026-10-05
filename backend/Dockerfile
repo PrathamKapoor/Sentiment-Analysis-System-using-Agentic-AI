@@ -49,8 +49,8 @@ WORKDIR /app
 # Copy installed packages from the builder stage.
 COPY --from=builder /install /usr/local
 
-# Copy only what production needs. Tests, fixtures, scripts, and
-# .env are explicitly excluded by .dockerignore.
+# Copy only what production needs. Tests and unused fixtures are excluded;
+# .dockerignore keeps the small model-quality benchmark fixture.
 COPY . .
 
 # Create and switch to a non-root runtime user.

@@ -9,7 +9,7 @@ from flask import current_app
 
 from app.extensions import db
 from app.errors.exceptions import ValidationError, NotFoundError
-from app.models import Report, Project, AiSummary, ProjectWebsiteContext
+from app.models import Report, Project, AiSummary, ProjectWebsiteContext, Investigation
 from app.models.report import FILE_FORMATS, REPORT_MODES
 from app.services.report_data_service import gather_report_data, ALL_SECTIONS, AI_INTERPRETATION_SECTION
 from app.services.pdf_report_service import generate_pdf
@@ -192,7 +192,7 @@ def _build_business_context(project: Project) -> Optional[Dict[str, Any]]:
 def create_report(project_id, actor_user_id, data):
     if data["fileFormat"] not in FILE_FORMATS:
         raise ValidationError(f"fileFormat must be one of: {', '.join(FILE_FORMATS)}")
-    if data["dateTo"] < data["dateFrom"]:
+    if data.get("dateFrom") is not None and data.get("dateTo") is not None and data["dateTo"] < data["dateFrom"]:
         raise ValidationError("dateTo must not be before dateFrom")
 
     mode = _coerce_mode(data.get("mode"))
@@ -214,11 +214,23 @@ def create_report(project_id, actor_user_id, data):
         # trumps the caller-supplied list.
         sections = [s for s in sections if s != AI_INTERPRETATION_SECTION]
     _validate_sections(sections)
+    if "investigationFindings" in sections and not data.get("investigationId"):
+        raise ValidationError("Select an investigation to include its findings")
 
     project = Project.query.filter_by(id=project_id).filter(Project.deleted_at.is_(None)).first()
     if project is None:
         raise NotFoundError("Project not found")
     organisation_id = project.organisation_id
+    investigation_id = data.get("investigationId")
+    if investigation_id:
+        try:
+            investigation_id = str(uuid.UUID(str(investigation_id)))
+        except (ValueError, TypeError, AttributeError):
+            raise ValidationError("investigationId must be a UUID")
+        if Investigation.query.filter_by(
+            id=investigation_id, project_id=project_id, organisation_id=organisation_id
+        ).first() is None:
+            raise NotFoundError("Investigation not found")
 
     report = Report(
         project_id=project_id,
@@ -232,6 +244,7 @@ def create_report(project_id, actor_user_id, data):
             "reportName": data.get("reportName"),
             "requestedSections": sections,
             "mode": mode,
+            "investigationId": investigation_id,
         },
         generated_by=actor_user_id,
     )
@@ -261,6 +274,7 @@ def create_report(project_id, actor_user_id, data):
             project, sections, data["dateFrom"], data["dateTo"],
             ai_summary=ai_summary,
             ai_interpretation=None,
+            investigation_id=investigation_id,
         )
 
         # Second pass: optionally generate AI interpretation. This is
@@ -282,6 +296,7 @@ def create_report(project_id, actor_user_id, data):
                 project, sections, data["dateFrom"], data["dateTo"],
                 ai_summary=ai_summary,
                 ai_interpretation=ai_result,
+                investigation_id=investigation_id,
             )
 
         extension = "pdf" if data["fileFormat"] == "pdf" else "xlsx"

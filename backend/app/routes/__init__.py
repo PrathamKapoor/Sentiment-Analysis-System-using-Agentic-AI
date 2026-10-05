@@ -18,6 +18,7 @@ def register_blueprints(app):
     from app.routes.workflows import project_workflows_bp, workflows_bp
     from app.routes.llm import llm_bp
     from app.routes.project_website import project_website_bp
+    from app.routes.investigations import project_investigations_bp
 
     app.register_blueprint(health_bp, url_prefix=API_PREFIX)
     app.register_blueprint(auth_bp, url_prefix=f"{API_PREFIX}/auth")
@@ -56,6 +57,7 @@ def register_blueprints(app):
     app.register_blueprint(
         project_website_bp, url_prefix=f"{API_PREFIX}/projects/<project_id>/website"
     )
+    app.register_blueprint(project_investigations_bp, url_prefix=f"{API_PREFIX}/projects/<project_id>/investigations")
 
     from app.routes.dataset_profile import datasets_profile_bp
     from app.routes.evaluation import evaluation_bp

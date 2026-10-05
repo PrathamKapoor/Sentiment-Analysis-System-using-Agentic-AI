@@ -14,7 +14,7 @@ REPORT_MODES = ("standard", "enhanced")
 class Report(UUIDPrimaryKeyMixin, db.Model):
     __tablename__ = "reports"
     __table_args__ = (
-        db.CheckConstraint("date_range_end >= date_range_start", name="ck_report_date_range"),
+        db.CheckConstraint("date_range_start IS NULL OR date_range_end IS NULL OR date_range_end >= date_range_start", name="ck_report_date_range"),
     )
 
     # Approved schema exactly. report_name (Phase 5 brief field, no backing
@@ -22,8 +22,8 @@ class Report(UUIDPrimaryKeyMixin, db.Model):
     # documented as "full request snapshot for reproducibility". No
     # report_type/generated_at/updated_at columns.
     project_id = db.Column(db.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
-    date_range_start = db.Column(db.Date, nullable=False)
-    date_range_end = db.Column(db.Date, nullable=False)
+    date_range_start = db.Column(db.Date, nullable=True)
+    date_range_end = db.Column(db.Date, nullable=True)
     sections = db.Column(db.JSON, nullable=False, default=list)
     generation_parameters = db.Column(db.JSON, nullable=False, default=dict)
     # ``standard`` (default) or ``enhanced``. Enhanced reports may include

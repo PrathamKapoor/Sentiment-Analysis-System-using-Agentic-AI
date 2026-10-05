@@ -10,9 +10,11 @@ run since Phase 3 — see README "Testing Notes" in prior phases for why).
 Collection status/history are derived from audit_logs + data_sources.last_
 collected_at, never duplicated into a separate table.
 """
+import json
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from urllib.parse import urlsplit, urlunsplit
 
 from flask import current_app
 
@@ -23,10 +25,14 @@ from app.services.audit_service import log_action
 from app.services.text_cleaning import clean_text, normalize_for_dedup
 from app.services.dataset_service import _parse_rating, _parse_date
 from app.services.collectors.base import CollectionLimits
+from app.services.collectors.base import CollectorResult
 from app.services.collectors.registry import get_collector, describe_all_source_types
 from app.services.collectors.robots import is_collection_allowed_by_robots
 from app.services.collectors.security import validate_url_shape
-from app.services.source_fallback import RUNTIME_REGISTRY, run_fallback
+from app.services.entity_resolver import resolve_project_entity
+from app.services.project_keyword_matching import evaluate_record_keywords
+from app.services.collection_pipeline import collect_with_fallbacks
+from app.services.source_fallback import RUNTIME_REGISTRY
 
 _COLLECTION_HISTORY_ACTIONS = (
     "collection.started", "collection.completed", "collection.failed",
@@ -40,6 +46,39 @@ _COLLECTION_STATUS_ACTIONS = (
 # (test-connection/preview/collect) — see _serialized_collection() below.
 _collection_lock = threading.Lock()
 _LOCK_ACQUIRE_TIMEOUT_SECONDS = 30
+
+
+def _review_provenance(raw):
+    """Keep small, safe source references; external metadata is untrusted."""
+    record_id = raw.get("external_review_id")
+    if record_id is not None:
+        record_id = str(record_id).strip()[:255] or None
+
+    source_url = None
+    candidate = raw.get("review_url")
+    if isinstance(candidate, str) and len(candidate) <= 8192:
+        try:
+            parsed = urlsplit(candidate)
+            if parsed.scheme.lower() in {"http", "https"} and parsed.hostname:
+                host = parsed.hostname.encode("idna").decode("ascii")
+                if ":" in host and not host.startswith("["):
+                    host = f"[{host}]"
+                if parsed.port:
+                    host = f"{host}:{parsed.port}"
+                source_url = urlunsplit((parsed.scheme.lower(), host, parsed.path[:2048], "", ""))[:2048]
+        except (UnicodeError, ValueError):
+            source_url = None
+
+    metadata = raw.get("source_metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    try:
+        encoded = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        if len(encoded.encode("utf-8")) > 8192:
+            metadata = {}
+    except (TypeError, ValueError):
+        metadata = {}
+    return record_id, source_url, metadata
 
 
 @contextmanager
@@ -99,6 +138,13 @@ def _policy_for(source, collector, limits):
     if source.type == "reddit":
         health = collector.health_check(source)
         return "allowed" if health["available"] else "api_preferred"
+
+    if source.type == "github_issues":
+        # This collector targets GitHub's fixed official REST API host, not
+        # arbitrary web pages. Its repository URL is only an identifier;
+        # the API destination and each connection are SSRF-validated by the
+        # collector. robots.txt governs HTML crawlers, not this API client.
+        return "allowed"
 
     try:
         validate_url_shape(source.url)
@@ -235,34 +281,72 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
     })
     db.session.commit()
 
+    direct_error_details = {}
     try:
-        result = collector.collect(source, options)
+        if current_app.config.get("COLLECTION_DIRECT_ENABLED", True):
+            result = collector.collect(source, options)
+        else:
+            result = CollectorResult(
+                fetch_status="skipped", result_code="COLLECTION_DIRECT_DISABLED",
+                result_message="Direct collection is disabled by server configuration.",
+                adapter=collector.collector_type,
+            )
     except CollectionError as exc:
-        exc.details = {
-            "sourceId": str(source.id),
-            "fetchStatus": "failed",
-            **(exc.details or {}),
-        }
-        log_action(organisation_id, actor_user_id, "collection.failed", "data_source", source.id, {
-            "errorCode": exc.code, "safeErrorMessage": exc.message, "triggerType": trigger_type,
-            **exc.details,
-        })
-        db.session.commit()
-        raise
+        if exc.code in {"COLLECTION_TIMEOUT", "COLLECTION_HTTP_ERROR", "COLLECTION_PARSE_ERROR"}:
+            direct_error_details = dict(exc.details or {})
+            result = CollectorResult(
+                fetch_status="failed", result_code=exc.code,
+                result_message=exc.message, warnings=[exc.message], adapter=collector.collector_type,
+                product_identity=(exc.details or {}).get("productIdentity"),
+                product_title=(exc.details or {}).get("productTitle"),
+            )
+        elif (
+            exc.code == "COLLECTION_BLOCKED"
+            and collector.collector_type == "ecommerce"
+            and (exc.details or {}).get("adapter") == "amazon_india"
+            and (exc.details or {}).get("reviewPageStatus") == "SIGN_IN"
+        ):
+            # Amazon's sign-in response stops Amazon collection. Only the
+            # independent approved fallback pipeline may be tried next.
+            result = CollectorResult(
+                fetch_status="blocked", result_code=exc.code,
+                result_message=exc.message, warnings=[exc.message],
+                adapter=collector.collector_type, review_page_status="SIGN_IN",
+                product_identity=(exc.details or {}).get("productIdentity"),
+                product_title=(exc.details or {}).get("productTitle"),
+            )
+        else:
+            exc.details = {
+                "sourceId": str(source.id),
+                "fetchStatus": "failed",
+                **(exc.details or {}),
+            }
+            log_action(organisation_id, actor_user_id, "collection.failed", "data_source", source.id, {
+                "errorCode": exc.code, "safeErrorMessage": exc.message, "triggerType": trigger_type,
+                **exc.details,
+            })
+            db.session.commit()
+            raise
 
-    fallback = None
-    # Level 0 remains authoritative: fallback is considered only after a
-    # permitted direct attempt returned no usable records. It cannot turn a
-    # catalog discovery result into a network request.
-    if not result.records:
-        fallback = run_fallback(
-            source, result.result_code or "NO_RECORDS", RUNTIME_REGISTRY,
-            discovery_mode=current_app.config.get("SOURCE_FALLBACK_DISCOVERY_MODE", "CURATED_ONLY"),
-        )
-        if fallback.status == "SUCCESS":
-            result.records = fallback.records
-            result.fetch_status = "fallback"
-        elif fallback.status == "API_CREDENTIALS_REQUIRED":
+    pipeline = collect_with_fallbacks(
+        source,
+        result.records,
+        result.result_code or ("NO_RECORDS" if not result.records else "SUCCESS"),
+        fallback_registry=RUNTIME_REGISTRY,
+        identity_hint=(
+            {"productTitle": result.product_title, "asin": result.product_identity}
+            if collector.collector_type == "ecommerce"
+            and (urlsplit(source.url).hostname or "").casefold().removeprefix("www.") == "amazon.in"
+            else None
+        ),
+    )
+    direct_failure_code = result.result_code if result.fetch_status == "failed" else None
+    fallback = pipeline.fallback
+    result.records = pipeline.records
+    if pipeline.final_level > 1:
+        result.fetch_status = "fallback"
+    if not result.records and fallback:
+        if fallback.status == "API_CREDENTIALS_REQUIRED":
             result.result_code = "FALLBACK_CREDENTIALS_REQUIRED"
             result.result_message = "An approved fallback provider is available but is not configured. Server-side API credentials are required."
         elif fallback.status == "RATE_LIMITED":
@@ -271,6 +355,21 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
         elif fallback.status != "NO_DATA_AVAILABLE":
             result.result_code = "FALLBACK_UNAVAILABLE"
             result.result_message = "The approved fallback provider is currently unavailable. You can upload a dataset instead."
+    if not pipeline.records and direct_failure_code in {
+        "COLLECTION_TIMEOUT", "COLLECTION_HTTP_ERROR", "COLLECTION_PARSE_ERROR",
+    }:
+        log_action(organisation_id, actor_user_id, "collection.failed", "data_source", source.id, {
+            "errorCode": direct_failure_code,
+            "safeErrorMessage": result.result_message or "Direct collection failed and no configured fallback returned usable evidence.",
+            "triggerType": trigger_type,
+            "collectionPipeline": pipeline.attempts,
+        })
+        db.session.commit()
+        raise CollectionError(
+            result.result_message or "Direct collection failed and no configured fallback returned usable evidence.",
+            code=direct_failure_code,
+            details={**direct_error_details, "collectionPipeline": pipeline.attempts},
+        )
 
     existing_hashes = {
         normalize_for_dedup(r.text)
@@ -281,6 +380,8 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
     inserted = 0
     duplicates = 0
     invalid = 0
+    keyword_filtered = 0
+    entity = resolve_project_entity(source.project, source.url)
     record_source = (fallback.provenance.get("apiProvider") if fallback and fallback.status == "SUCCESS" else None) or source.type
 
     try:
@@ -288,6 +389,10 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
             text = clean_text(raw.get("review_text"))
             if not text:
                 invalid += 1
+                continue
+            keyword_match = evaluate_record_keywords(text, source.keywords, entity)
+            if not keyword_match["included"]:
+                keyword_filtered += 1
                 continue
             rating, rating_ok = _parse_rating(raw.get("rating"))
             if not rating_ok:
@@ -301,6 +406,8 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
             if is_dup:
                 duplicates += 1
 
+            source_record_id, source_url, source_metadata = _review_provenance(raw)
+
             db.session.add(Review(
                 project_id=source.project_id,
                 data_source_id=source.id,
@@ -312,6 +419,11 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
                 rating=rating,
                 review_date=review_date,
                 is_duplicate=is_dup,
+                keyword_matches=keyword_match,
+                source_record_id=source_record_id,
+                source_url=source_url,
+                source_metadata=source_metadata,
+                source_collected_at=datetime.now(timezone.utc),
             ))
             inserted += 1
 
@@ -329,7 +441,7 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
 
     completed_at = datetime.now(timezone.utc)
     records_found = len(result.records)
-    if records_found == 0:
+    if records_found == 0 or (inserted == 0 and keyword_filtered == records_found):
         status = "no_records"
     elif result.truncated or invalid > 0 or result.fetch_status == "partial":
         status = "partial_success"
@@ -344,7 +456,13 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
         result_message = result.result_message or "The page loaded, but no review candidates were detected."
     elif inserted == 0 and invalid:
         result_code = "COLLECTION_NO_VALID_REVIEWS"
-        result_message = f"{records_found} candidates were detected, but none contained valid review data."
+        result_message = (
+            f"No reviews were saved: {invalid} candidates failed validation and "
+            f"{keyword_filtered} were excluded by configured keyword rules."
+        )
+    elif inserted == 0 and keyword_filtered == records_found and records_found:
+        result_code = "COLLECTION_NO_KEYWORD_MATCHES"
+        result_message = f"{records_found} candidates were found, but none matched the configured inclusion and exclusion terms."
     elif status == "partial_success":
         result_code = "COLLECTION_PARTIAL"
         result_message = f"{inserted} reviews were saved with warnings."
@@ -359,6 +477,9 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
         "recordsInserted": inserted,
         "recordsDuplicate": duplicates,
         "recordsInvalid": invalid,
+        "recordsFilteredByKeywords": keyword_filtered,
+        "recordsAfterKeywordFilter": records_found - keyword_filtered,
+        "keywordFilteringStatus": "APPLIED",
         "startedAt": started_at.isoformat(),
         "completedAt": completed_at.isoformat(),
         "pagesFetched": result.pages_fetched,
@@ -392,6 +513,14 @@ def _collect_source_locked(source, actor_user_id, trigger_type, options):
         "reviewDiscoveryMethod": result.review_discovery_method,
         "parserStatus": result.parser_status,
         "fallback": fallback.provenance if fallback else None,
+        "collectionPipeline": pipeline.attempts,
+        "collectionLevel": pipeline.final_level,
+        "identityDiscovery": ({
+            "provider": pipeline.identity_discovery.get("provider"),
+            "providerRole": pipeline.identity_discovery.get("provider_role"),
+            "model": pipeline.identity_discovery.get("model_name"),
+            "status": pipeline.identity_discovery.get("status"),
+        } if pipeline.identity_discovery else None),
     }
 
     log_action(organisation_id, actor_user_id, "collection.completed", "data_source", source.id, {

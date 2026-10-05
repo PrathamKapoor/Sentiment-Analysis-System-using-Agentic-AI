@@ -12,6 +12,7 @@ export default function DatasetDetailPanel({ datasetId, onClose, onChanged }) {
   const [error, setError] = useState(null);
   const [mapping, setMapping] = useState({ text: "", rating: "", date: "", source: "" });
   const [busy, setBusy] = useState(null);
+  const [profileRefreshKey, setProfileRefreshKey] = useState(0);
 
   const load = () => {
     datasetApi.get(datasetId).then((r) => { setDataset(r.data.data); setMapping((current) => ({ ...current, ...(r.data.data.columnMapping || {}) })); }).catch(setError);
@@ -25,6 +26,7 @@ export default function DatasetDetailPanel({ datasetId, onClose, onChanged }) {
       const payload = Object.fromEntries(Object.entries(mapping).filter(([, v]) => v));
       await datasetApi.mapColumns(datasetId, payload);
       showToast("Column mapping saved");
+      setProfileRefreshKey((key) => key + 1);
       load();
     } catch (err) { setError(err); } finally { setBusy(null); }
   };
@@ -35,6 +37,7 @@ export default function DatasetDetailPanel({ datasetId, onClose, onChanged }) {
     try {
       await datasetApi.validate(datasetId);
       showToast("Dataset validated");
+      setProfileRefreshKey((key) => key + 1);
       load();
     } catch (err) { setError(err); } finally { setBusy(null); }
   };
@@ -107,7 +110,7 @@ export default function DatasetDetailPanel({ datasetId, onClose, onChanged }) {
         <button
           className="btn btn-primary btn-sm"
           onClick={onProcess}
-          disabled={dataset.status !== "validated" || !!busy}
+          disabled={(dataset.status !== "validated" && !(dataset.status === "failed" && dataset.validRowCount > 0)) || !!busy}
         >
           {busy === "processing" ? "Processing…" : "Process into Reviews"}
         </button>
@@ -118,7 +121,7 @@ export default function DatasetDetailPanel({ datasetId, onClose, onChanged }) {
           </div>
         )}
 
-        {dataset.id && <DatasetProfilePanel datasetId={dataset.id} />}
+        {dataset.id && <DatasetProfilePanel datasetId={dataset.id} refreshKey={profileRefreshKey} />}
       </div>
     </div>
   );

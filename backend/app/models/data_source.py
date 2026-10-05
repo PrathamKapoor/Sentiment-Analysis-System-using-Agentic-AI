@@ -6,7 +6,7 @@ class DataSource(UUIDPrimaryKeyMixin, db.Model):
     __tablename__ = "data_sources"
 
     TYPES = (
-        "review_site", "ecommerce", "reddit", "forum", "blog", "news", "survey",
+        "review_site", "ecommerce", "reddit", "github_issues", "forum", "blog", "news", "survey",
     )
 
     project_id = db.Column(

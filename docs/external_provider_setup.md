@@ -1,5 +1,31 @@
 # External fallback provider setup
 
+The production collection path and structured product-discovery providers are
+documented in [`three_level_collection.md`](./three_level_collection.md).
+RapidAPI credentials and endpoint values are operator configuration; only a
+user-authorized endpoint with reviewed terms and a tested response schema
+should be used. The application does not hard-code the example marketplace
+provider or endpoint.
+
+## Optional OpenRouter and NVIDIA LLMs
+
+The backend uses OpenAI-compatible chat completions. `backend/.env.example`
+configures OpenRouter as the primary for report interpretation and structured
+product discovery, with NVIDIA's compatible endpoint as each fallback. Add
+actual credentials only to ignored `backend/.env` or a deployment secret store:
+
+```text
+OPENROUTER_API_KEY=<OpenRouter key>
+NVIDIA_API_KEY=<NVIDIA key>
+```
+
+Report interpretation uses `apodex/apodex-1.1-mini:free` and falls back to
+`z-ai/glm-5.3-flash`. Product discovery uses `poolside/laguna-s-2.1:free` and
+falls back to `deepseek-ai/deepseek-v4.1-flash`. If a provider fails or returns
+unusable structured output, the app proceeds to its next configured fallback
+and ultimately its deterministic behavior. Model output is never authoritative
+product evidence.
+
 ## Reddit Official OAuth API
 
 1. Create an OAuth application through Reddit's developer process and review

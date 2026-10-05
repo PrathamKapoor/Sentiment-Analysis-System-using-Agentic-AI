@@ -48,7 +48,7 @@ def _sanitize_llm_text(text: Any) -> str:
 
 from app.services.llm.fallback_interpretation import generate_deterministic_interpretation
 from app.services.llm.prompt_builder import build_prompt
-from app.services.llm.provider import get_provider
+from app.services.llm.provider import get_provider, interpretation_fallback_provider
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,9 @@ def interpret_analytics(
       }
     """
     provider = get_provider()
-    if not provider.is_available() or provider.name == "deterministic":
+    fallback = interpretation_fallback_provider()
+    if ((not provider.is_available() or provider.name == "deterministic")
+            and (fallback is None or not fallback.is_available())):
         result = {
             "text": generate_deterministic_interpretation(analytics or {}),
             "source": "deterministic",
@@ -152,6 +154,19 @@ def interpret_analytics(
         max_tokens=max_tokens,
         temperature=temperature,
     )
+
+    # Retry once through the independently configured NVIDIA-compatible
+    # fallback before using the deterministic interpretation.
+    if not call_result.ok:
+        if fallback is not None and fallback.is_available():
+            fallback_result = fallback.complete(
+                user, system=system, max_tokens=max_tokens, temperature=temperature,
+            )
+            if fallback_result.ok:
+                provider, call_result = fallback, fallback_result
+            else:
+                call_result.metadata["fallback_status"] = fallback_result.status
+                call_result.metadata["fallback_model"] = fallback_result.model
 
     if call_result.ok:
         # Sanitise before persisting; the report renderers see this text.

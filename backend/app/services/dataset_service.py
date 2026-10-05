@@ -4,6 +4,7 @@ import os
 import threading
 import uuid
 from datetime import date, datetime
+from urllib.parse import urlsplit
 
 from flask import current_app
 
@@ -12,6 +13,8 @@ from app.errors.exceptions import DatasetAlreadyUploadedError, ValidationError
 from app.models import Dataset, Review
 from app.services.dataset_file_parser import read_columns_and_rows
 from app.services.text_cleaning import clean_text, normalize_for_dedup
+from app.services.entity_resolver import resolve_project_entity
+from app.services.project_keyword_matching import evaluate_record_keywords
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 ALLOWED_FILE_TYPES = {
@@ -158,6 +161,51 @@ def _parse_date(raw_value):
     return None  # unparseable date doesn't invalidate the row, just left blank
 
 
+def _parse_source(raw_value):
+    """Normalize raw source column values into a safe (source_name, source_url) pair.
+
+    If raw_value is an HTTP/HTTPS URL, extracts the destination into source_url
+    (clamped to the 2048-char DB limit) and derives a clean, human-readable source
+    label (e.g. 'Amazon', 'Flipkart', or hostname) clamped to 100 characters.
+    If raw_value is regular text, clamps to 100 characters to prevent DB truncation.
+    """
+    if raw_value is None:
+        return None, None
+    raw_str = str(raw_value).strip()
+    if not raw_str:
+        return None, None
+
+    if raw_str.startswith("http://") or raw_str.startswith("https://"):
+        source_url = raw_str[:2048]
+        try:
+            parsed = urlsplit(raw_str)
+            hostname = (parsed.hostname or "").lower()
+            if hostname.startswith("www."):
+                hostname = hostname[4:]
+            if hostname:
+                if "amazon." in hostname or hostname == "amazon":
+                    source_name = "Amazon"
+                elif "flipkart." in hostname or hostname == "flipkart":
+                    source_name = "Flipkart"
+                elif "twitter.com" in hostname or "x.com" in hostname:
+                    source_name = "Twitter/X"
+                elif "reddit.com" in hostname:
+                    source_name = "Reddit"
+                elif "github.com" in hostname:
+                    source_name = "GitHub"
+                elif "google.com" in hostname:
+                    source_name = "Google"
+                else:
+                    source_name = hostname[:100]
+            else:
+                source_name = raw_str[:100]
+        except Exception:
+            source_name = raw_str[:100]
+        return source_name, source_url
+
+    return raw_str[:100], None
+
+
 def _extract_rows(dataset, existing_text_hashes):
     """Parses the file and classifies every row as valid/invalid/duplicate.
 
@@ -175,6 +223,7 @@ def _extract_rows(dataset, existing_text_hashes):
     valid_rows = []
     error_samples = []
     seen_hashes = set(existing_text_hashes)
+    entity = resolve_project_entity(dataset.project)
 
     for idx, raw_row in enumerate(rows):
         row_number = idx + 2  # 1-indexed + header row
@@ -192,7 +241,9 @@ def _extract_rows(dataset, existing_text_hashes):
             continue
 
         review_date = _parse_date(raw_row.get(mapping["date"])) if mapping.get("date") else None
-        source = raw_row.get(mapping["source"]) if mapping.get("source") else None
+        source_name, source_url = _parse_source(raw_row.get(mapping["source"])) if mapping.get("source") else (None, None)
+
+        keyword_match = evaluate_record_keywords(text, entity=entity)
 
         text_hash = normalize_for_dedup(text)
         is_duplicate = text_hash in seen_hashes
@@ -202,8 +253,10 @@ def _extract_rows(dataset, existing_text_hashes):
             "text": text,
             "rating": rating,
             "review_date": review_date,
-            "source": str(source) if source else None,
+            "source": source_name,
+            "source_url": source_url,
             "is_duplicate": is_duplicate,
+            "keyword_matches": keyword_match,
         })
 
     return valid_rows, error_samples
@@ -257,7 +310,7 @@ def validate_dataset(dataset):
 
 
 def process_dataset(dataset):
-    if dataset.status != Dataset.STATUS_VALIDATED:
+    if dataset.status not in (Dataset.STATUS_VALIDATED, Dataset.STATUS_FAILED) or not dataset.valid_row_count:
         details = {"stage": "validation"}
         try:
             details["errors"] = json.loads(dataset.processing_error) if dataset.processing_error else []
@@ -282,9 +335,12 @@ def process_dataset(dataset):
                 rating=row["rating"],
                 review_date=row["review_date"],
                 source=row["source"],
+                source_url=row.get("source_url"),
                 is_duplicate=row["is_duplicate"],
+                keyword_matches=row["keyword_matches"],
             ))
         dataset.status = Dataset.STATUS_PROCESSED
+        dataset.processing_error = None
         db.session.commit()
     except Exception as exc:
         db.session.rollback()

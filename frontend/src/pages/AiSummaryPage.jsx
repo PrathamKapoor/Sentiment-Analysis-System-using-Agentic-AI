@@ -19,7 +19,7 @@ function SummaryCard({ summary, onAction, expanded, onToggle }) {
           <span className={`badge text-bg-${STATUS_BADGE[summary.approvalStatus]} me-2`}>{summary.approvalStatus}</span>
           <span className="badge text-bg-dark me-2">AI/System Generated</span>
           <strong>{summary.summaryType}</strong>
-          <span className="text-muted small ms-2">{summary.dateRangeStart} → {summary.dateRangeEnd}</span>
+          <span className="text-muted small ms-2">{summary.dateRangeStart || summary.dateRangeEnd ? `${summary.dateRangeStart || "Any date"} → ${summary.dateRangeEnd || "Any date"}` : "All available dates"}</span>
         </div>
         <span className="text-muted small">{new Date(summary.createdAt).toLocaleString()}</span>
       </div>
@@ -72,13 +72,12 @@ export default function AiSummaryPage() {
   useEffect(load, [projectId]);
 
   const generate = async () => {
-    if (!dateFrom || !dateTo) {
-      setError({ message: "Select a date range first" });
-      return;
-    }
     setGenerating(true);
     try {
-      const resp = await aiSummaryApi.generate(projectId, { summaryType, dateFrom, dateTo });
+      const payload = { summaryType };
+      if (dateFrom) payload.dateFrom = dateFrom;
+      if (dateTo) payload.dateTo = dateTo;
+      const resp = await aiSummaryApi.generate(projectId, payload);
       showToast("Summary generated");
       setExpandedId(resp.data.data.id);
       load();
@@ -119,13 +118,14 @@ export default function AiSummaryPage() {
             </select>
           </div>
           <div>
-            <label className="form-label small mb-0">From</label>
+            <label className="form-label small mb-0">From (optional)</label>
             <input type="date" className="form-control form-control-sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           </div>
           <div>
-            <label className="form-label small mb-0">To</label>
+            <label className="form-label small mb-0">To (optional)</label>
             <input type="date" className="form-control form-control-sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
+          <span className="form-text">Leave both dates blank to include all available reviews. Either date can be set on its own.</span>
           <button className="btn btn-primary" onClick={generate} disabled={generating}>
             {generating ? "Generating..." : "Generate Summary"}
           </button>

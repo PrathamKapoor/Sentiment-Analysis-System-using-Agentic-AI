@@ -81,12 +81,20 @@ two optional layers.
 
 This is a non-negotiable architectural principle. Concretely:
 
-- The LLM is **only** invoked by `report_service.create_report`, and
-  only when `mode == "enhanced"`.
+> Historical scope note: this document describes the original Phase 9
+> report-interpretation layer. The explicitly requested three-level collection
+> extension adds a separate structured product-discovery operation and is
+> documented in [`three_level_collection.md`](./three_level_collection.md).
+
+- The Phase 9 report LLM is invoked by `report_service.create_report`, and
+  only when `mode == "enhanced"`. Product discovery has a separate provider
+  and schema, and does not enter the agent workflow control loop.
 - The LLM is **never** invoked by:
   - sentiment analysis, aspect analysis, topic analysis, keyword analysis
   - dataset profiling
-  - collection (preview, test-connection, collect)
+  - collection preview and test-connection. Collection's separately authorized
+    Level 3 path may use structured product search terms with the existing
+    allow-listed retrieval adapters after direct and configured scraping fail.
   - workflow steps
   - alerts, recommendations, AI summary draft generation
 - The analytics dict that reaches the LLM is built from already-stored

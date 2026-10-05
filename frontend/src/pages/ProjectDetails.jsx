@@ -11,7 +11,12 @@ import ConfirmationModal from "../components/ConfirmationModal";
 import PermissionGuard from "../components/PermissionGuard";
 import AgenticWorkflowPanel from "../components/AgenticWorkflowPanel";
 import ProjectWebsitePanel from "../components/ProjectWebsitePanel";
+import ProjectEntityPanel from "../components/ProjectEntityPanel";
+import SecurityFindingsPanel from "../components/SecurityFindingsPanel";
+import CompetitorIntelligencePanel from "../components/CompetitorIntelligencePanel";
+import FeedbackCategoriesPanel from "../components/FeedbackCategoriesPanel";
 import LlmStatusBadge from "../components/LlmStatusBadge";
+import TemporalIntelligencePanel from "../components/TemporalIntelligencePanel";
 
 export default function ProjectDetails() {
   const { projectId } = useParams();
@@ -134,6 +139,11 @@ export default function ProjectDetails() {
       )}
 
       <ProjectWebsitePanel projectId={projectId} />
+      <ProjectEntityPanel projectId={projectId} />
+      <FeedbackCategoriesPanel projectId={projectId} />
+      <CompetitorIntelligencePanel projectId={projectId} />
+      <SecurityFindingsPanel projectId={projectId} />
+      <TemporalIntelligencePanel projectId={projectId} />
 
       <div className="mb-2">
         <span className="me-2 small text-muted">AI interpretation layer:</span>
@@ -153,6 +163,7 @@ export default function ProjectDetails() {
         <Link className="btn btn-domain-warning" to={`/projects/${projectId}/ai-summary`}>AI Summary</Link>
         <Link className="btn btn-domain-warning" to={`/projects/${projectId}/alerts`}>Alerts</Link>
         <Link className="btn btn-outline-primary" to={`/projects/${projectId}/reports`}>Reports</Link>
+        <Link className="btn btn-outline-primary" to={`/projects/${projectId}/investigations`}>Investigations</Link>
       </div>
 
       <ConfirmationModal

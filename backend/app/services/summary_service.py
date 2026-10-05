@@ -147,7 +147,15 @@ def generate_comparative_summary(analytics):
 
 
 def generate_periodic_summary(analytics, date_from, date_to):
-    return f"For the period {date_from} to {date_to}: {_fact_sentence(analytics)} {_topic_sentence(analytics)}"
+    if date_from is None and date_to is None:
+        period = "Across all available review dates"
+    elif date_from is None:
+        period = f"Through {date_to}"
+    elif date_to is None:
+        period = f"From {date_from} onward"
+    else:
+        period = f"For the period {date_from} to {date_to}"
+    return f"{period}: {_fact_sentence(analytics)} {_topic_sentence(analytics)}"
 
 
 def generate_overall_summary(analytics):

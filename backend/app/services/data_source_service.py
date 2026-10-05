@@ -3,6 +3,7 @@ from app.errors.exceptions import ValidationError, CollectionError
 from app.models import DataSource
 from app.services.collectors.security import validate_url_shape
 from app.services.collectors.ecommerce import normalize_ecommerce_url
+from urllib.parse import urlsplit
 
 
 def _validate_url(url):
@@ -34,6 +35,21 @@ def _normalized_source_url(source_type, url):
     return normalize_ecommerce_url(url) if source_type == "ecommerce" else url.strip()
 
 
+def infer_source_type(url):
+    """Choose a registered collector from the URL host/path; unknown public
+    pages use the bounded generic review-site collector.
+    """
+    parts = urlsplit(url.strip())
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    if host in {"amazon.com", "amazon.in", "amazon.co.uk", "flipkart.com"}:
+        return "ecommerce"
+    if host in {"reddit.com", "oauth.reddit.com"}:
+        return "reddit"
+    if host == "github.com" and len([part for part in parts.path.split("/") if part]) >= 2:
+        return "github_issues"
+    return "review_site"
+
+
 def list_sources(project_id):
     return DataSource.query.filter_by(project_id=project_id).order_by(
         DataSource.created_at.desc()
@@ -41,13 +57,14 @@ def list_sources(project_id):
 
 
 def create_source(project_id, data):
-    if data["type"] not in DataSource.TYPES:
+    source_type = data.get("type") or infer_source_type(data["url"])
+    if source_type not in DataSource.TYPES:
         raise ValidationError(f"type must be one of: {', '.join(DataSource.TYPES)}")
     _validate_url(data["url"])
     source = DataSource(
         project_id=project_id,
-        type=data["type"],
-        url=_normalized_source_url(data["type"], data["url"]),
+        type=source_type,
+        url=_normalized_source_url(source_type, data["url"]),
         keywords=normalize_keywords(data.get("keywords")),
     )
     db.session.add(source)

@@ -14,7 +14,7 @@ from app.services.source_fallback import (
 def _source():
     return SimpleNamespace(
         type="amazon", url="https://www.amazon.in/dp/example",
-        project=SimpleNamespace(product_or_topic="Samsung s25", name="Samsung phones"),
+        project=SimpleNamespace(product_or_topic="Samsung Galaxy S25", name="Samsung phones"),
     )
 
 

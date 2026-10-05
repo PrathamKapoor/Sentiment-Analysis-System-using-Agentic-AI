@@ -82,6 +82,10 @@ not listed as required has a safe development default.
 | `LLM_MODEL` | required iff `openai_compatible` | unset | Model name | — |
 | `LLM_TIMEOUT_SECONDS` | no | `20` | Per-call timeout | Bounds worst-case request latency |
 | `LLM_MAX_TOKENS` | no | `512` | Response cap | Bounds spend |
+| `LLM_MAIN_API_KEY` / `LLM_MAIN_BASE_URL` / `LLM_MAIN_MODEL` | no | unset | Independent main provider for structured product discovery | Secret key; operator-configured endpoint only |
+| `LLM_FALLBACK_API_KEY` / `LLM_FALLBACK_BASE_URL` / `LLM_FALLBACK_MODEL` | no | unset | Independent fallback after main failure/invalid output | Secret key; independent endpoint/model; never copied from main |
+| `LLM_TEXT_FALLBACK_API_KEY` / `LLM_TEXT_FALLBACK_BASE_URL` / `LLM_TEXT_FALLBACK_MODEL` | no | unset | Separate fallback for report interpretation | Secret key; independently configured |
+| `OPENROUTER_API_KEY` / `NVIDIA_API_KEY` | no | unset | Referenced by configured provider key variables | Secrets; env or secret manager only |
 
 ## Sentiment engine
 
@@ -101,6 +105,20 @@ not listed as required has a safe development default.
 | `SCRAPER_USER_AGENT` | no | project bot UA | Identification header | Honest identification; do not spoof |
 | `SCRAPER_ALLOW_PRIVATE_TARGETS` | no | **`false`** | DANGEROUS: disables SSRF private-network block. Env-only; never request/agent controlled | **Enabling in any internet-reachable env is a P0 SSRF exposure** |
 | `SOURCE_FALLBACK_DISCOVERY_MODE` | no | `CURATED_ONLY` | Discovery metadata-only | Execution remains curated-registry-only |
+| `SCRAPING_RAPIDAPI_ENABLED` | no | `false` | Explicitly enable the configured Level 2 provider | Provider remains inert unless true and all settings are complete |
+| `SCRAPING_RAPIDAPI_KEY` | no | unset | Optional Level 2 provider credential | **Secret — never commit or expose** |
+| `SCRAPING_RAPIDAPI_HOST` / `SCRAPING_RAPIDAPI_BASE_URL` / `SCRAPING_RAPIDAPI_ENDPOINT` | no | unset | Fixed operator-configured RapidAPI destination | HTTPS, exact configured host, SSRF-validated, no redirects |
+| `SCRAPING_RAPIDAPI_SOURCE_TYPES` | no | `ecommerce` | Source types the configured endpoint supports | Server-side allowlist, comma-separated |
+| `SCRAPING_RAPIDAPI_REQUEST_DELAY_SECONDS` | no | `1` | Minimum process-local provider request interval | Clamped to 0–60 seconds; 429 is not automatically retried |
+| `COLLECTION_DIRECT_ENABLED` | no | `true` | Enable Level 1 collectors | Existing source policy checks still apply |
+| `COLLECTION_SCRAPING_ENABLED` | no | `true` | Enable Level 2 provider attempts | Only after no usable direct records |
+| `COLLECTION_LLM_FALLBACK_ENABLED` | no | `true` | Enable LLM query refinement at Level 3 | LLM cannot select tools/URLs or create evidence |
+| `COLLECTION_MAX_LEVEL` | no | `3` | Highest level to attempt (1–3) | Clamped to 1–3 |
+| `COLLECTION_REQUEST_TIMEOUT_SECONDS` | no | `30` | Level 2 request timeout | Clamped to 1–30 seconds |
+| `COLLECTION_MAX_RESULTS_PER_SOURCE` | no | `100` | Per-source Level 2 record cap | Clamped to 1–500 |
+| `COLLECTION_REQUIRE_IDENTITY_MATCH` | no | `true` | Require deterministic exact match for fallback evidence | False fails closed; uncertain/wrong variants are never admitted |
+| `PRODUCT_DISCOVERY_LLM_ENABLED` | no | `true` | Enable structured identity/query suggestions | Falls back to deterministic extraction |
+| `PRODUCT_DISCOVERY_MAX_KEYWORDS` | no | `20` | Search keyword cap | Clamped to 1–20 |
 
 ## Reddit (optional)
 
@@ -108,6 +126,12 @@ not listed as required has a safe development default.
 | --- | --- | --- | --- | --- |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | no | unset | Enables Reddit OAuth collection path | **Secrets — never commit** |
 | `REDDIT_USER_AGENT` | no | `SentimentAnalysisSystem/1.0` | Identifiable UA for the Reddit fallback | Honest identification only |
+
+## GitHub Issues API (optional)
+
+| Variable | Required in prod | Dev default | Production behavior | Security impact |
+| --- | --- | --- | --- | --- |
+| `GITHUB_TOKEN` | no | unset | Optional server-side token used only by the fixed official API adapter for public repository issues; unauthenticated access is supported with lower provider rate limits | **Secret — never commit or expose to the browser** |
 
 ## Analysis tuning (all optional)
 
@@ -127,6 +151,7 @@ not listed as required has a safe development default.
 | `PORT` | `5000` | Bind port for `python -m app.runner` | — |
 | `BIND_ADDRESS` | `0.0.0.0` | Bind address | Bind `127.0.0.1` when fronting locally |
 | `WEB_CONCURRENCY` | `4` | Waitress thread count | Bounds per-process concurrency |
+| `INVESTIGATION_WORKER_POLL_SECONDS` | `1` | Investigation worker idle poll, clamped to 0.2–30 seconds | Controls idle polling load; PostgreSQL leases bound claims |
 
 ## Testing
 

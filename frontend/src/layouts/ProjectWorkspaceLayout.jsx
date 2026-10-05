@@ -34,6 +34,7 @@ const WORKSPACE_GROUPS = [
       { path: "ai-summary", label: "AI Summary", permission: "view_reviews" },
       { path: "alerts", label: "Alerts", permission: "view_reviews" },
       { path: "reports", label: "Reports", permission: "view_reviews" },
+      { path: "investigations", label: "Investigations", permission: "view_reviews" },
     ],
   },
 ];
@@ -50,6 +51,7 @@ const PAGE_LABELS = {
   "ai-summary": "AI Summary",
   alerts: "Alerts",
   reports: "Reports",
+  investigations: "Investigations",
 };
 
 export default function ProjectWorkspaceLayout() {

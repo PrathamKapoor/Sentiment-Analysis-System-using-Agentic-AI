@@ -355,10 +355,10 @@ a, button, .card, .form-control, .form-select, .modal-content, .toast {
 .lamp-bulb { width: 60px; height: 26px; margin: -3px auto 0; border-radius: 0 0 50% 50%; background: #5d4a32; transition: background 700ms, box-shadow 900ms; }
 .lamp-on .lamp-bulb, .lamp-turning-on .lamp-bulb { background: var(--warm-bright); box-shadow: 0 8px 60px 24px rgba(255,192,99,.6), 0 0 160px 50px rgba(255,184,72,.18); }
 .lamp-turning-off .lamp-bulb { background: #5d4a32; box-shadow: none; transition-duration: 520ms; }
-.lamp-pull { position: absolute; top: 118px; left: calc(50% + 72px); z-index: 3; width: 38px; height: 184px; padding: 0; background: transparent; border: 0; cursor: pointer; }
+.lamp-pull { position: absolute; top: 118px; left: calc(50% + 72px); z-index: 3; width: 38px; height: 184px; padding: 0; background: transparent; border: 0; cursor: pointer; pointer-events: none; }
 .lamp-pull:focus-visible { outline: 2px solid var(--warm-bright); outline-offset: 8px; border-radius: 20px; }
-.lamp-cord { display: block; width: 2px; height: 145px; margin: 0 auto; background: linear-gradient(#4c4b49,#9a7950); transform-origin: top; transition: transform 520ms cubic-bezier(.22,1.4,.36,1); }
-.lamp-pull-handle { display: block; width: 16px; height: 26px; margin: -1px auto 0; border-radius: 10px 10px 7px 7px; background: linear-gradient(90deg,#695139,#d5a56a,#674a33); box-shadow: 0 5px 10px rgba(0,0,0,.5); }
+.lamp-cord { display: block; width: 2px; height: 145px; margin: 0 auto; background: linear-gradient(#4c4b49,#9a7950); transform-origin: top; transition: transform 520ms cubic-bezier(.22,1.4,.36,1); pointer-events: auto; }
+.lamp-pull-handle { display: block; width: 16px; height: 26px; margin: -1px auto 0; border-radius: 10px 10px 7px 7px; background: linear-gradient(90deg,#695139,#d5a56a,#674a33); box-shadow: 0 5px 10px rgba(0,0,0,.5); pointer-events: auto; }
 .lamp-turning-on .lamp-cord, .lamp-turning-off .lamp-cord { animation: lamp-pull-cycle 520ms cubic-bezier(.2,.8,.2,1); }
 .lamp-on .lamp-cord { transform: scaleY(.94); }
 .lamp-login-content { position: relative; z-index: 1; width: min(1100px,calc(100% - 48px)); margin: 0 auto; padding: 240px 0 60px; display: grid; grid-template-columns: 1fr 390px; gap: 80px; align-items: center; }

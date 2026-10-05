@@ -133,9 +133,9 @@ class OpenAICompatibleProvider:
     Configured entirely from environment:
 
       LLM_PROVIDER=openai_compatible
-      LLM_BASE_URL=https://api.openai.com/v1
+      LLM_BASE_URL=<provider-specific-base-url>
       LLM_API_KEY=<secret — never commit>
-      LLM_MODEL=gpt-4o-mini
+      LLM_MODEL=<provider-specific-model>
       LLM_TIMEOUT_SECONDS=20
       LLM_MAX_TOKENS=512
 
@@ -146,10 +146,20 @@ class OpenAICompatibleProvider:
     name = "openai_compatible"
 
     def __init__(self, base_url: str, api_key: str, model: str, timeout: int, max_tokens: int):
-        self.base_url = (base_url or "").rstrip("/")
+        candidate_url = (base_url or "").rstrip("/")
+        try:
+            from urllib.parse import urlsplit
+            parsed_base = urlsplit(candidate_url)
+            # Credentials belong in the dedicated API key variable, never in
+            # a URL that could be copied into diagnostics or logs.
+            self.base_url = "" if parsed_base.username or parsed_base.password else candidate_url
+        except ValueError:
+            self.base_url = ""
         self.api_key = api_key
         self.model = model
-        self.timeout = timeout
+        # Keep one upstream call bounded; investigation retry/step budgets
+        # assume no single provider request can hang for an operator-set age.
+        self.timeout = max(1, min(int(timeout), 20))
         self.max_tokens = max_tokens
 
     def is_available(self) -> bool:
@@ -195,7 +205,7 @@ class OpenAICompatibleProvider:
                 provider=self.name, model=self.model, status="timeout",
                 latency_ms=_ms_since(started),
                 error=f"LLM request timed out after {self.timeout}s.",
-                metadata={"url": self.base_url},
+                metadata={},
             )
         except requests.RequestException as exc:
             return LLMResult(
@@ -209,7 +219,7 @@ class OpenAICompatibleProvider:
                 provider=self.name, model=self.model, status="http_error",
                 latency_ms=_ms_since(started),
                 error=f"Upstream returned {resp.status_code}.",
-                metadata={"status_code": resp.status_code, "body_excerpt": resp.text[:300]},
+                metadata={"status_code": resp.status_code},
             )
 
         try:
@@ -224,7 +234,7 @@ class OpenAICompatibleProvider:
                 provider=self.name, model=self.model, status="malformed",
                 latency_ms=_ms_since(started),
                 error=f"Could not parse response: {exc}",
-                metadata={"body_excerpt": resp.text[:300]},
+                metadata={},
             )
 
         if not isinstance(text, str) or not text.strip():
@@ -308,8 +318,8 @@ def _provider_from_env() -> LLMProvider:
     if name == "openai_compatible":
         return OpenAICompatibleProvider(
             base_url=os.environ.get("LLM_BASE_URL", ""),
-            api_key=os.environ.get("LLM_API_KEY", ""),
-            model=os.environ.get("LLM_MODEL", "gpt-4o-mini"),
+            api_key=_resolve_api_key(os.environ.get("LLM_API_KEY", "")),
+            model=os.environ.get("LLM_MODEL", ""),
             timeout=int(os.environ.get("LLM_TIMEOUT_SECONDS", "20")),
             max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "512")),
         )
@@ -319,6 +329,67 @@ def _provider_from_env() -> LLMProvider:
     # Unknown provider name -> deterministic fallback with a warning.
     logger.warning("Unknown LLM_PROVIDER=%r; falling back to deterministic", name)
     return DeterministicProvider()
+
+
+def _role_provider(role: str) -> Optional[LLMProvider]:
+    """Build one independently configured provider role, or omit it."""
+    prefix = f"LLM_{role.upper()}_"
+    api_key = _resolve_api_key(os.environ.get(prefix + "API_KEY", ""))
+    base_url = os.environ.get(prefix + "BASE_URL", "")
+    model = os.environ.get(prefix + "MODEL", "")
+    if not all((api_key, base_url, model)):
+        return None
+    return OpenAICompatibleProvider(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        timeout=int(os.environ.get("LLM_TIMEOUT_SECONDS", "20")),
+        max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "512")),
+    )
+
+
+def _resolve_api_key(value: str) -> str:
+    """Resolve an env-file reference such as ``$NVIDIA_API_KEY`` safely."""
+    value = (value or "").strip()
+    if value.startswith("${") and value.endswith("}"):
+        return os.environ.get(value[2:-1], "")
+    if value.startswith("$") and value[1:].replace("_", "").isalnum():
+        return os.environ.get(value[1:], "")
+    return value
+
+
+def interpretation_fallback_provider() -> Optional[LLMProvider]:
+    """Return the separate fallback used for report interpretation."""
+    api_key = _resolve_api_key(os.environ.get("LLM_TEXT_FALLBACK_API_KEY", ""))
+    base_url = os.environ.get("LLM_TEXT_FALLBACK_BASE_URL", "")
+    model = os.environ.get("LLM_TEXT_FALLBACK_MODEL", "")
+    if not all((api_key, base_url, model)):
+        return None
+    return OpenAICompatibleProvider(
+        base_url=base_url, api_key=api_key, model=model,
+        timeout=int(os.environ.get("LLM_TIMEOUT_SECONDS", "20")),
+        max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "512")),
+    )
+
+
+def configured_provider_chain():
+    """Return the configured main/fallback providers in fixed order.
+
+    Legacy LLM_PROVIDER/LLM_BASE_URL/LLM_API_KEY/LLM_MODEL remains supported
+    as the main provider when LLM_MAIN_* is not configured.
+    """
+    main = _role_provider("main")
+    fallback = _role_provider("fallback")
+    chain = []
+    if main is not None:
+        chain.append(("main", main))
+    else:
+        legacy = get_provider()
+        if legacy.name != "deterministic" and legacy.is_available():
+            chain.append(("main", legacy))
+    if fallback is not None:
+        chain.append(("fallback", fallback))
+    return chain
 
 
 _provider_cache: Optional[LLMProvider] = None
@@ -343,13 +414,22 @@ def is_configured() -> bool:
     """True when the active provider is something other than the
     deterministic fallback. Lets the UI show a clear "LLM enabled"
     indicator without exposing which provider is wired."""
-    return get_provider().name != "deterministic" and get_provider().is_available()
+    return (
+        any(provider.is_available() for _role, provider in configured_provider_chain())
+        or bool((fallback := interpretation_fallback_provider()) and fallback.is_available())
+    )
 
 
 def provider_status() -> Dict[str, Any]:
     """Return a small, safe summary of the active provider for the UI
     status panel. Never exposes the API key or the full base URL."""
-    p = get_provider()
+    chain = configured_provider_chain()
+    p = chain[0][1] if chain else get_provider()
+    role = chain[0][0] if chain else "deterministic"
+    if not chain and (not p.is_available() or p.name == "deterministic"):
+        text_fallback = interpretation_fallback_provider()
+        if text_fallback is not None and text_fallback.is_available():
+            p, role = text_fallback, "text_fallback"
     base = getattr(p, "base_url", "") or ""
     return {
         "provider": p.name,
@@ -357,6 +437,8 @@ def provider_status() -> Dict[str, Any]:
         "configured": is_configured(),
         "model": getattr(p, "model", None) or getattr(p, "_default_text", ""),
         "baseUrlHost": _safe_host(base) if base else None,
+        "providerRole": role,
+        "fallbackConfigured": any(role == "fallback" and item.is_available() for role, item in chain),
     }
 
 

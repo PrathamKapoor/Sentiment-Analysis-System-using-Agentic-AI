@@ -9,6 +9,7 @@ class Review(UUIDPrimaryKeyMixin, SoftDeleteMixin, db.Model):
             "(data_source_id IS NOT NULL) != (dataset_id IS NOT NULL)",
             name="ck_review_single_origin",
         ),
+        db.Index("ix_reviews_data_source_record_id", "data_source_id", "source_record_id"),
     )
 
     project_id = db.Column(
@@ -23,6 +24,11 @@ class Review(UUIDPrimaryKeyMixin, SoftDeleteMixin, db.Model):
     review_date = db.Column(db.Date, nullable=True)
     is_spam = db.Column(db.Boolean, nullable=False, default=False)
     is_duplicate = db.Column(db.Boolean, nullable=False, default=False)
+    keyword_matches = db.Column(db.JSON, nullable=False, default=dict)
+    source_record_id = db.Column(db.String(255), nullable=True)
+    source_url = db.Column(db.String(2048), nullable=True)
+    source_metadata = db.Column(db.JSON, nullable=False, default=dict)
+    source_collected_at = db.Column(db.DateTime(timezone=True), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
 
     project = db.relationship("Project", back_populates="reviews")
@@ -50,5 +56,10 @@ class Review(UUIDPrimaryKeyMixin, SoftDeleteMixin, db.Model):
             "reviewDate": self.review_date.isoformat() if self.review_date else None,
             "isSpam": self.is_spam,
             "isDuplicate": self.is_duplicate,
+            "keywordMatches": self.keyword_matches or {},
+            "sourceRecordId": self.source_record_id,
+            "sourceUrl": self.source_url,
+            "sourceMetadata": self.source_metadata or {},
+            "sourceCollectedAt": self.source_collected_at.isoformat() if self.source_collected_at else None,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
         }

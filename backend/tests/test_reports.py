@@ -58,6 +58,33 @@ def test_topic_section_in_report_succeeds(client):
         assert "topicAnalysis" not in (body.get("sectionsSkipped") or [])
 
 
+def test_report_can_be_generated_without_date_range(client):
+    _org_id, headers = owner_context(client)
+    project_id = create_project(client, headers)
+    create_reviews_directly(project_id, ["A useful product", "A poor product"])
+    response = client.post(
+        f"/api/v1/projects/{project_id}/reports",
+        json={"sections": ["projectOverview"], "fileFormat": "pdf"},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.get_json()
+    assert response.get_json()["data"]["dateRangeStart"] is None
+    assert response.get_json()["data"]["dateRangeEnd"] is None
+
+
+def test_report_accepts_one_sided_date_range(client):
+    _org_id, headers = owner_context(client)
+    project_id = create_project(client, headers)
+    response = client.post(
+        f"/api/v1/projects/{project_id}/reports",
+        json={"dateFrom": "2026-01-01", "sections": ["projectOverview"], "fileFormat": "excel"},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.get_json()
+    assert response.get_json()["data"]["dateRangeStart"] == "2026-01-01"
+    assert response.get_json()["data"]["dateRangeEnd"] is None
+
+
 def test_conclusion_section_in_report_succeeds(client):
     """Regression: the conclusion section used to crash report generation.
 
@@ -165,6 +192,167 @@ def test_topic_section_rows_use_topic_name_and_review_count(client, app):
             assert set(row) == {"topicName", "reviewCount"}
             assert isinstance(row["topicName"], str) and row["topicName"]
             assert isinstance(row["reviewCount"], int)
+
+
+def test_security_report_contains_evidence_provenance_and_trust_labels(client, app):
+    from app.extensions import db
+    from app.models import Project, Report
+
+    _, headers = owner_context(client)
+    project_id = create_project(client, headers, name="Security Report Project")
+    reviews = create_reviews_directly(project_id, [
+        "My account was taken over after a strange login."
+    ], review_date=TODAY)
+    from app.models import DataSource
+    with app.app_context():
+        source = db.session.get(DataSource, reviews[0].data_source_id)
+        source.url = "https://user:secret@example.test/reviews?token=private#comment"
+        reviews[0].source_url = "https://github.com/example/project/issues/7?tracking=private#discussion"
+        db.session.commit()
+    analyzed = client.post(
+        f"/api/v1/projects/{project_id}/security-findings/analyze", headers=headers,
+    )
+    assert analyzed.status_code == 200
+
+    generated = {}
+    for file_format in ("excel", "pdf"):
+        response = client.post(
+            f"/api/v1/projects/{project_id}/reports",
+            json={
+                "dateFrom": "2026-06-01", "dateTo": "2026-06-30",
+                "sections": ["securityFindings"], "fileFormat": file_format,
+            }, headers=headers,
+        )
+        assert response.status_code == 201, response.get_json()
+        assert response.get_json()["data"]["generationStatus"] == "complete"
+        generated[file_format] = response.get_json()["data"]["id"]
+    pdf = client.get(f"/api/v1/reports/{generated['pdf']}/download", headers=headers)
+    assert pdf.status_code == 200
+    assert pdf.data.startswith(b"%PDF")
+    with app.app_context():
+        report = db.session.get(Report, generated["excel"])
+        workbook = load_workbook(report.file_path, data_only=True)
+        assert "Security Findings" in workbook.sheetnames
+        assert "Methodology" in workbook.sheetnames
+        assert "Sources" in workbook.sheetnames
+        evidence_cells = [cell.value for row in workbook["Security Findings"].iter_rows() for cell in row]
+        assert "ACCOUNT_COMPROMISE" in evidence_cells
+        assert any("account was taken over" in str(value).lower() for value in evidence_cells)
+        assert "https://github.com/example/project/issues/7" in evidence_cells
+        assert "https://example.test/reviews" not in evidence_cells
+        assert not any("secret" in str(value) or "token=private" in str(value) for value in evidence_cells)
+        assert any("Retrieved At" == value for value in next(workbook["Security Findings"].iter_rows(values_only=True)))
+        methodology_cells = [cell.value for row in workbook["Methodology"].iter_rows() for cell in row]
+        assert "FACT" in methodology_cells
+        assert "HYPOTHESIS" in methodology_cells
+        source_rows = list(workbook["Sources"].iter_rows(values_only=True))
+        assert source_rows[1][5] == 1
+        assert source_rows[1][4] == "https://example.test/reviews"
+
+
+def test_report_includes_project_scoped_investigation_findings(client, app):
+    from app.extensions import db
+    from app.models import Report
+    from app.services.investigation_service import run_one_investigation
+
+    _, headers = owner_context(client)
+    project_id = create_project(client, headers, name="Investigation Report Project")
+    reviews = create_reviews_directly(project_id, [
+        "My account was taken over after an unauthorized login from support.example.test."
+    ], review_date=TODAY)
+    analyzed = client.post(f"/api/v1/projects/{project_id}/security-findings/analyze", headers=headers)
+    assert analyzed.status_code == 200
+    created = client.post(f"/api/v1/projects/{project_id}/investigations",
+        json={"question": "Are customers reporting security concerns?"}, headers=headers)
+    assert created.status_code == 202
+    with app.app_context():
+        completed = run_one_investigation("report-test-worker")
+        assert completed.status in {"COMPLETED", "NEEDS_REVIEW"}
+        investigation_id = str(completed.id)
+
+    for file_format in ("excel", "pdf"):
+        response = client.post(f"/api/v1/projects/{project_id}/reports", headers=headers, json={
+            "dateFrom": "2026-06-01", "dateTo": "2026-06-30",
+            "sections": ["investigationFindings"], "fileFormat": file_format,
+            "investigationId": investigation_id,
+        })
+        assert response.status_code == 201, response.get_json()
+        if file_format == "pdf":
+            downloaded = client.get(f"/api/v1/reports/{response.get_json()['data']['id']}/download", headers=headers)
+            assert downloaded.status_code == 200 and downloaded.data.startswith(b"%PDF")
+        else:
+            with app.app_context():
+                report = db.session.get(Report, response.get_json()["data"]["id"])
+                workbook = load_workbook(report.file_path, data_only=True)
+                assert "Investigation" in workbook.sheetnames
+                rows = list(workbook["Investigation"].iter_rows(values_only=True))
+                all_text = " ".join(str(value) for row in rows for value in row if value is not None)
+                assert "Are customers reporting security concerns?" in all_text
+                assert str(reviews[0].id) in all_text
+
+    invalid = client.post(f"/api/v1/projects/{project_id}/reports", headers=headers, json={
+        "dateFrom": "2026-06-01", "dateTo": "2026-06-30",
+        "sections": ["investigationFindings"], "fileFormat": "pdf",
+    })
+    assert invalid.status_code in (400, 422)
+
+    malformed = client.post(f"/api/v1/projects/{project_id}/reports", headers=headers, json={
+        "dateFrom": "2026-06-01", "dateTo": "2026-06-30",
+        "sections": ["projectOverview"], "fileFormat": "pdf",
+        "investigationId": "not-a-valid-uuid-xxxxxxxxxxxxxxxxxx",
+    })
+    assert malformed.status_code in (400, 422)
+
+
+def test_excel_report_writes_untrusted_text_as_literal_not_formula(client, app):
+    from app.extensions import db
+    from app.models import Project, Report
+
+    _, headers = owner_context(client)
+    project_id = create_project(client, headers)
+    create_reviews_directly(project_id, [" \t=HYPERLINK(\"https://attacker.test\",\"click\")"], review_date=TODAY)
+    response = client.post(
+        f"/api/v1/projects/{project_id}/reports",
+        json={"dateFrom": "2026-06-01", "dateTo": "2026-06-30", "sections": ["representativeReviews"], "fileFormat": "excel"},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.get_json()
+    with app.app_context():
+        report = db.session.get(Report, response.get_json()["data"]["id"])
+        workbook = load_workbook(report.file_path, data_only=False)
+        cell = workbook["Reviews"]["A2"]
+        assert cell.data_type == "s"
+        assert cell.value.startswith("' \t=")
+
+
+def test_representative_review_section_respects_period_and_exclusions(client, app):
+    from app.extensions import db
+    from app.models import Review, Report
+
+    _, headers = owner_context(client)
+    project_id = create_project(client, headers)
+    reviews = create_reviews_directly(project_id, [
+        "Included in period.", "Outside period.", "Spam is excluded.",
+        "Duplicate is excluded.", "Deleted is excluded.",
+    ], review_date=TODAY)
+    with app.app_context():
+        db.session.get(Review, reviews[1].id).review_date = date(2026, 7, 1)
+        db.session.get(Review, reviews[2].id).is_spam = True
+        db.session.get(Review, reviews[3].id).is_duplicate = True
+        db.session.get(Review, reviews[4].id).deleted_at = TODAY
+        db.session.commit()
+
+    response = client.post(
+        f"/api/v1/projects/{project_id}/reports",
+        json={"dateFrom": "2026-06-01", "dateTo": "2026-06-30", "sections": ["representativeReviews"], "fileFormat": "excel"},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.get_json()
+    with app.app_context():
+        report = db.session.get(Report, response.get_json()["data"]["id"])
+        workbook = load_workbook(report.file_path, data_only=True)
+        values = [row[0] for row in workbook["Reviews"].iter_rows(min_row=2, values_only=True)]
+        assert values == ["Included in period."]
 
 
 def test_generate_pdf_report(client, app):

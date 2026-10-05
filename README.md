@@ -13,13 +13,13 @@
 [![Python](https://img.shields.io/badge/Python-3.13-3776ab?style=flat-square&logo=python)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.1-000000?style=flat-square&logo=flask)](https://flask.palletsprojects.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-4169e1?style=flat-square&logo=postgresql)](https://www.postgresql.org/)
-[![Tests](https://img.shields.io/badge/Tests-435%20Passing-10b981?style=flat-square)](#testing--verification)
+[![Tests](https://img.shields.io/badge/Tests-484%20Passing-10b981?style=flat-square)](#testing--verification)
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple?style=flat-square)](./LICENSE)
 [![Status: Work in Progress](https://img.shields.io/badge/Status-Work%20in%20Progress-orange?style=flat-square)](#project-status--work-in-progress)
 
 <br />
 
-**Every number this system reports is deterministic, reproducible, and traceable to a database row. Every action it takes is gated by a permission, and every AI-shaped output stops at a human approval gate.**
+**Analytical metrics come from trusted deterministic services and stored evidence. Optional report interpretation is labelled separately; summaries and recommendations keep their existing human-review controls, and API actions remain permission-scoped.**
 
 </div>
 
@@ -37,9 +37,11 @@
 >
 >   Both call the **same nine existing services** and are pinned step-for-step equivalent by `tests/test_langgraph_orchestrator.py`. The switch changes *how a workflow is walked*, never *what an agent computes*.
 > - **Still planned for the actual deployment:** putting a model in the loop (tool-calling agents, a planner, `interrupt()`-based human approval) and background/async execution. Neither exists yet. See [Agentic Orchestration: the two engines, and what is still missing](#agentic-orchestration-the-two-engines-and-what-is-still-missing).
-> - **Also still open:** a real Reddit API client, a persistent collection scheduler, and a real LLM provider (the current provider is optional and only used for one report section).
+> - **Also still open:** a persistent collection scheduler. The legacy LLM provider remains optional for report interpretation; separate main/fallback providers can optionally suggest product search terms. Reddit collection requires configured OAuth credentials.
 >
 > Everything marked ✅ below has been **executed and verified**; everything marked 🚧 is documented but not built. The [Limitations & Known Gaps](#limitations--known-gaps) section is deliberately honest about which is which.
+
+> **Local customer/security extension:** this working tree also contains unreleased migrations `0010`–`0016` for project entity/keyword configuration, provenance, security findings, duplicate relationships and persisted investigations, plus report trust/provenance and Vercel frontend guidance. It includes configured competitor matching, phrase-based feedback categories, a bounded official GitHub Issues API adapter, deterministic temporal/security analysis, and a PostgreSQL-leased investigation worker with an optional structured LLM synthesis layer. It does not provide general product search across sites, broad semantic classification, CTI/STIX export, or verified production deployment. These additions are not deployed. See [verified scope and gaps](./docs/customer_cyber_intelligence.md) and [deployment boundary](./docs/vercel_frontend_deployment.md).
 
 ---
 
@@ -110,6 +112,15 @@ Product and CX teams routinely need to answer questions like *"is delivery or pr
 - **Bounded budgets:** timeout, inter-request delay, max pages, max records, max response size, max redirects, max retries. Only genuinely transient failures (timeout, `429` with `Retry-After`, transient 5xx) are ever retried.
 - **Never evades** CAPTCHAs, sign-in walls, or anti-bot systems — it detects them and stops.
 
+### Three-level collection and product discovery
+- **Level 1 — direct:** existing first-party/source adapters remain preferred. If they return usable review text, later levels are skipped.
+- **Level 2 — configured API:** an optional operator-configured scraping API (RapidAPI adapter included) is attempted only after direct collection has no usable records.
+- **Level 3 — LLM-assisted approved retrieval:** structured product search terms may refine requests to the existing manually approved retrieval adapters. Model output never selects URLs/tools or becomes review evidence. Without retrieved, provenance-bearing, exact-identity evidence, the result is `NO_DATA_AVAILABLE`.
+- Product discovery returns a reviewable draft through the existing project entity panel. It does not save automatically. Exact model/SKU/URL/name checks reject known product variants and leave uncertain matches out of automatic ingestion.
+- Review rows remain canonical; method, level, provider, identity status, and timestamp are kept in their existing source metadata. Policy blocks (robots, SSRF, CAPTCHA, sign-in, or access controls) are terminal and are never bypassed by fallback.
+
+Configuration and provider setup: [`docs/three_level_collection.md`](./docs/three_level_collection.md). The backend dotenv loader reads `backend/.env`; Compose uses the ignored repository-root `.env` for interpolation. Production should use its secret manager.
+
 ### Agentic Orchestration (two engines, no LLM)
 - **Nine thin agents** — Data Collection, Data Quality, Sentiment, Topic, Aspect, Summary, Recommendation, Alert, Report — each wrapping exactly one existing service. No agent reimplements business logic.
 - **Six workflow types:** `FULL_ANALYSIS`, `COLLECT_AND_ANALYSE`, `REFRESH_ANALYSIS`, `EXECUTIVE_BRIEF`, `ALERT_RECHECK`, `REPORT_REFRESH`, each with sensible default steps and per-request overrides.
@@ -152,20 +163,22 @@ flowchart TD
         Agents["9 Thin Agents + Deterministic Orchestrator"]
     end
 
-    subgraph Collect ["Collection Layer (bounded)"]
+    subgraph Collect ["Collection Layer (three bounded levels)"]
         SSRF["SSRF Guard (shape → DNS → connect-time)"]
         Robots["robots.txt Policy Check"]
-        Adapters["Static HTML · Amazon.in · Flipkart · Reddit(stub)"]
+        Adapters["Level 1 · Direct adapters and imports"]
+        ScrapingAPI["Level 2 · Configured scraping APIs"]
+        ApprovedRetrieval["Level 3 · Fixed approved retrieval adapters"]
     end
 
-    subgraph LLM ["Optional LLM Layer (off by default)"]
-        Provider["Deterministic Provider (default)"]
-        Remote["OpenAI-Compatible Endpoint (opt-in)"]
+    subgraph LLM ["Optional product discovery and report interpretation"]
+        Provider["Main provider → fallback provider → deterministic"]
+        Remote["Structured search terms only; never evidence or URL/tool selection"]
     end
 
     subgraph Data ["Data Tier"]
         ORM["SQLAlchemy 2.x + Flask-Migrate"]
-        DB[("PostgreSQL 18 · 25 tables · migration head 0009")]
+        DB[("PostgreSQL 18 · 31 tables · migration head 0016")]
     end
 
     UI --> Guards --> Routes
@@ -175,6 +188,8 @@ flowchart TD
     Routes --> Services
     Agents --> Services
     Ingest --> Collect
+    Adapters --> ScrapingAPI --> ApprovedRetrieval
+    ApprovedRetrieval --> LLM
     Collect --> SSRF --> Robots --> Adapters
     Report --> Provider
     Provider -.optional.-> Remote
@@ -192,19 +207,19 @@ flowchart TD
 | **Framework** | Flask 3.1 (application factory) | REST API, blueprint routing, CLI commands |
 | **Frontend** | React 18, Vite 6, React Router 7, Bootstrap 5 | 18 authenticated pages + auth shell |
 | **Charts** | Chart.js (`react-chartjs-2`) | Sentiment doughnut, trends line, comparison bars |
-| **ORM & Database** | Flask-SQLAlchemy 2.x, Alembic (Flask-Migrate) | 25 tables, 9-migration chain `0001 → 0009` |
+| **ORM & Database** | Flask-SQLAlchemy 3.1, Alembic (Flask-Migrate) | 31 tables, 16-migration chain `0001 → 0016` |
 | **Database** | PostgreSQL 18 (psycopg v3), SQLite for tests/dev fallback | UUID primary keys throughout, cross-DB `GUID` type |
 | **Auth** | Flask-JWT-Extended (access + refresh rotation) | Short-lived access tokens, server-side revocation |
 | **Validation** | Marshmallow | Request schemas, per-blueprint, fail-fast `422` |
 | **Sentiment** | VADER 3.3.2 (`vaderSentiment`) | Lexicon baseline, offline, deterministic |
 | **Topics** | scikit-learn 1.9 (TF-IDF + MiniBatchKMeans) | Reproducible clustering (`random_state=42`) |
 | **Aspects** | Custom dictionary + local-sentence VADER | Explainable, no model download, no spaCy |
-| **Collection** | `requests` 2.33 + BeautifulSoup4 4.14 | Static HTML only — no Playwright/Selenium/Scrapy |
+| **Collection** | `requests` 2.33 + BeautifulSoup4 4.14 | Bounded static/e-commerce collection plus approved Reddit OAuth fallback |
 | **Security** | `urllib3` 2.7 (connect-time hook), Flask-Limiter 4.1, `redis` 7.1 | SSRF guard, rate limiting, shared revocation state |
 | **Reports** | ReportLab 5.0, openpyxl 3.1.5 | PDF + Excel rendering, real data types |
 | **Orchestration** | Custom deterministic runner **or** LangGraph 1.2 `StateGraph` | Selectable via `AGENTIC_ENGINE`; **no LLM in either path** |
 | **Serving** | Gunicorn (containers), Waitress (Windows host) | Production WSGI |
-| **Testing** | pytest 9.1 | 435 backend tests + 20 isolated prototype tests |
+| **Testing** | pytest 9.1 | 484 backend tests + 20 isolated prototype tests |
 
 ---
 
@@ -268,8 +283,8 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 cd backend
 set FLASK_APP=run.py          # Windows cmd  (PowerShell: $env:FLASK_APP="run.py")
 
-flask db upgrade              # apply migration chain 0001 → 0009
-flask seed                    # insert the 12 permissions + 6 built-in roles (idempotent)
+flask db upgrade              # apply migration chain 0001 → 0016
+flask seed                    # insert the 13 permissions + 6 built-in roles (idempotent)
 ```
 
 `flask seed` is safe to run on every startup — it only inserts missing rows. The plain-SQL equivalent is `database/seed.sql` if you'd rather seed with `psql`.
@@ -316,6 +331,39 @@ The repo ships a synthetic demo dataset at `database/demo_dataset.csv` — 28 re
 7. **Download the report** (`/projects/<id>/reports`) — a real PDF or XLSX generated server-side.
 8. **Compare** (`/comparison`) — create a second project with different data and compare sentiment, volume, and aspects side by side.
 
+### Optional richer synthetic demo data
+
+`database/demo_intelligence_dataset.csv` is explicitly synthetic **DEMO DATA**. It contains no collected customer content and makes configured competitor examples, phrase-based security signals, source labels, and recent time-window comparisons visible. Use it instead of `demo_dataset.csv` when recording those screens. Findings from this file are customer-reported demo signals only; it contains no confirmed incident or verified malicious indicator.
+
+### Isolated Docker demo stack (PowerShell)
+
+This starts a fresh local PostgreSQL 18 database, API, worker, and frontend. It does not use the backend `.env` or any production database. A local ignored `.env.demo.local` keeps the generated demo credentials stable across restarts.
+
+```powershell
+Set-Location "C:\Sentiment_Analysis_Management_System_using_Agentic_AI"
+$dbPassword = python -c "import secrets; print(secrets.token_hex(32))"
+$flaskSecret = python -c "import secrets; print(secrets.token_hex(32))"
+$jwtSecret = python -c "import secrets; print(secrets.token_hex(32))"
+@"
+POSTGRES_USER=sentiment_app_user
+POSTGRES_PASSWORD=$dbPassword
+POSTGRES_DB=sentiment_demo
+DATABASE_URL=postgresql+psycopg://sentiment_app_user:$dbPassword@db:5432/sentiment_demo
+SECRET_KEY=$flaskSecret
+JWT_SECRET_KEY=$jwtSecret
+FLASK_ENV=production
+FRONTEND_URL=http://localhost:8082
+CORS_ALLOWED_ORIGINS=http://localhost:8082
+FRONTEND_PORT=8082
+LLM_PROVIDER=deterministic
+INVESTIGATION_WORKER_POLL_SECONDS=0.5
+"@ | Set-Content -Encoding ascii .env.demo.local
+docker compose --env-file .env.demo.local --project-name sams-demo-readiness-20261004 up --build -d
+docker compose --env-file .env.demo.local --project-name sams-demo-readiness-20261004 ps
+```
+
+Open `http://localhost:8082`, register the local demo user, create a project, and upload either synthetic CSV. Map `review_text` to text, `rating` to rating, `review_date` to date, and `source` to source when present. Then validate/process the import and run analysis. The deterministic investigator does not need an LLM API key. Stop this isolated stack with `docker compose --env-file .env.demo.local --project-name sams-demo-readiness-20261004 down` (without `-v` to retain the local demo database).
+
 ---
 
 ## Agentic Orchestration: the two engines, and what is still missing
@@ -355,7 +403,7 @@ ReportAgent     →  ReportService     →  ReportLab / openpyxl
 **What it deliberately does not add:**
 
 - **No new tool surface.** There is exactly one graph node per registered agent, asserted by a test. LangGraph cannot call anything the deterministic runner could not.
-- **No new persistence.** A LangGraph checkpointer is *not* attached. Durable workflow state stays in the `agent_workflows` table (AGENTS.md §13 forbids moving it to Python-only memory), and a `SqliteSaver`/`PostgresSaver` would mean a 26th table plus a second source of truth. The approval gate is therefore still the existing `waiting_for_approval` column and the existing approve/resume/reject endpoints, not `interrupt()`.
+- **No LangGraph checkpointer.** Durable workflow state stays in the `agent_workflows` table (AGENTS.md §13 forbids moving it to Python-only memory), and a `SqliteSaver`/`PostgresSaver` would add another application table and a second source of truth. The approval gate is therefore still the existing `waiting_for_approval` column and the existing approve/resume/reject endpoints, not `interrupt()`.
 - **No background execution.** The graph is still invoked synchronously inside the HTTP request.
 - **No telemetry.** `langchain-core` arrives as a transitive dependency, but nothing imports `langchain-*` and `LANGCHAIN_TRACING_V2` is never set, so no trace data leaves the process.
 
@@ -388,17 +436,16 @@ The graph exists; the *model* does not. Still to come:
 
 > This repository makes **no claim** of being an LLM-agent system. See [`docs/phase7_deferred_issues.md`](./docs/phase7_deferred_issues.md) (`PHASE7_DEFERRED_LANGGRAPH`) and [`docs/agentic_architecture.md`](./docs/agentic_architecture.md).
 
-### The optional LLM (a genuinely different thing)
+### Optional LLM calls (a separate capability, not the workflow control loop)
 
-One outbound LLM call exists in the entire codebase: `backend/app/services/llm/provider.py:192`, reachable only from the **report** layer, only when `mode == "enhanced"`, and only to generate a contextual interpretation section. It:
+The legacy provider generates contextual interpretation in enhanced reports. The product-discovery service has independent main and fallback providers and can be called by the authenticated project entity suggestion endpoint or at Level 3 collection fallback. It:
 
-- sees **aggregate analytics only** — raw review text is never sent;
-- cannot change any measured number;
-- falls back to a labelled deterministic interpretation on **every** failure mode;
-- is **unreachable from any workflow** (the report agent never sets `mode`);
-- is **off by default** (`LLM_PROVIDER=deterministic`).
+- receives only the entity description or bounded search terms for product discovery, never the `.env`, credentials, or raw review corpus;
+- returns strict-schema search suggestions only; it cannot invent evidence, choose a URL/tool, or alter measured analytics;
+- tries the configured fallback provider once after a main-provider error or invalid response, then uses deterministic extraction;
+- remains outside agent workflow branching. Level 3 retrieval is fixed to the existing manually approved adapter registry.
 
-If you want to try it, see [Optional LLM Interpretation Layer](#optional-llm-interpretation-layer).
+The legacy report configuration remains documented under [Optional LLM Interpretation and Product Discovery](#optional-llm-interpretation-and-product-discovery); all three collection levels are described in [`docs/three_level_collection.md`](./docs/three_level_collection.md).
 
 ---
 
@@ -444,14 +491,18 @@ The canonical templates are [`backend/.env.example`](./backend/.env.example) and
 | `SCRAPER_ALLOW_PRIVATE_TARGETS` | `false` | **DEV/TEST ONLY.** Disables the private-IP block. Environment-only — never request-, API-, or agent-controllable |
 | `AGENTIC_ENGINE` | `deterministic` | Which orchestrator walks a workflow: `deterministic` (plain-Python loop) or `langgraph` (equivalent `StateGraph`). Picks the *runner*, never what an agent computes. Unknown values fall back to `deterministic`. No LLM either way. |
 
-### Optional LLM (off by default)
+### Optional LLM (deterministic operation without credentials)
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `LLM_PROVIDER` | `deterministic` | `deterministic` \| `openai_compatible` \| `stub` |
 | `LLM_BASE_URL` | — | Any OpenAI-compatible `/chat/completions` endpoint (OpenAI, Azure, Together, vLLM, Ollama `/v1`, LM Studio) |
 | `LLM_API_KEY` | — | Your key. **Never commit it.** |
-| `LLM_MODEL` | `gpt-4o-mini` | Model identifier |
+| `LLM_MODEL` | unset | Provider-specific model identifier |
+| `LLM_MAIN_API_KEY` / `LLM_MAIN_BASE_URL` / `LLM_MAIN_MODEL` | — | Independent main provider for structured product discovery |
+| `LLM_FALLBACK_API_KEY` / `LLM_FALLBACK_BASE_URL` / `LLM_FALLBACK_MODEL` | — | Independent fallback provider; attempted after main fails or returns invalid JSON |
+
+Third-party API configuration uses `SCRAPING_RAPIDAPI_ENABLED`, `SCRAPING_RAPIDAPI_KEY`, `SCRAPING_RAPIDAPI_HOST`, `SCRAPING_RAPIDAPI_BASE_URL`, and `SCRAPING_RAPIDAPI_ENDPOINT`; `SCRAPING_RAPIDAPI_REQUEST_DELAY_SECONDS` sets its minimum request interval. Collection feature flags and budgets are listed in `backend/.env.example` and the production configuration matrix.
 
 ### Analysis tuning (all optional)
 
@@ -471,7 +522,7 @@ REVOCATION_STORE_URL=redis://localhost:6379/1
 ## Testing & Verification
 
 ```bash
-# Backend — 435 tests, in-memory SQLite, no external services required
+# Backend — 484 tests, in-memory SQLite, no external services required
 cd backend
 python -m pytest -v
 ```
@@ -492,17 +543,17 @@ python -m pytest -v
 
 | Verification | Result |
 |---|---|
-| Backend pytest suite | ✅ **435 passed, 0 failed, 2 warnings** |
+| Backend pytest suite | ✅ **484 passed, 0 failed, 2 existing warnings** in the final demo-readiness regression run (546.14s) |
 | Experimental prototype suite | ✅ **20 passed** |
-| Frontend Vite production build | ✅ **PASS** (167 modules) |
+| Frontend Vite production build | ✅ **PASS** (179 modules; route-level chunks; largest JS chunk 252.35 kB; no Vite chunk-size warning) |
 | Python dependency audit | ✅ **`pip-audit` — no known vulnerabilities** (was 16 across 5 packages) |
 | Node dependency audit | ✅ **`npm audit` — 0 vulnerabilities**, production and dev |
-| React Router 6 → 7 migration | ✅ Real-browser verified: all 18 authenticated routes, nested project workspace, `NavLink`/`Link` client-side navigation, against a live backend and a real login — 0 console errors, 0 page errors |
-| Migration chain `0001 → 0009` on real PostgreSQL 18.6 (upgrade → downgrade → re-upgrade) | ✅ Verified via `scripts/audit_migration_postgres.py` |
+| Browser walkthrough | 🚧 Not performed in this session: the in-app browser runtime was unavailable; HTTP route fallback and health checks were verified |
+| Migration chain `0001 → 0016` on real PostgreSQL 18.6 (upgrade → downgrade to 0009 → re-upgrade) | ✅ Verified via `scripts/audit_migration_postgres.py` |
 | Full user workflow over real HTTP in production mode | ✅ Verified via `scripts/phase12_smoke.py` |
 | Multi-instance JWT revocation + distributed rate limiting (2 processes + real Redis) | ✅ Verified via `scripts/phase14_distributed_verification.py` |
 | Operator `pg_dump`/`pg_restore` backup + destroy-restore drill | ✅ Verified via `scripts/phase14_pg_dump_drill.py` |
-| Containerized deployment path | 🚧 **Not runtime-verified** — no Docker daemon on the verification host; Dockerfiles/compose statically validated only |
+| Isolated local Docker demo stack | ✅ Runtime verified on 2026-10-04 (fresh PostgreSQL 18 migration through `0016`; API, frontend, database and worker containers healthy). Production deployment remains unverified |
 | Real S3 object storage | 🚧 Interface implemented and mock-tested; no live bucket transfer verified |
 | End-to-end browser walkthrough of every page | 🚧 **Partially done** — routing is real-browser verified (above); the *content* of every page under live data is not yet walked |
 | Login page mouse-clickability | 🚧 **Known UI defect** — the decorative `.lamp-fixture`/`.lamp-pull` overlays intercept pointer events over the login panel's submit button. Pre-existing, unrelated to routing; the form submits fine with the keyboard (Enter). See [Limitations](#limitations--known-gaps). |
@@ -546,6 +597,7 @@ docker compose up --build
 | `redis` | — | Shared revocation + rate-limit state (`--appendonly yes`) |
 | `migrate` | — | **One-shot** migration job. App replicas wait for it to exit 0 |
 | `backend` | `5000` | `flask seed` then gunicorn, **1 worker / 8 threads** |
+| `investigations-worker` | — | Separate single process using PostgreSQL leases; runs only persisted investigations over ingested evidence |
 | `frontend` | `8080` | Built static assets served by nginx |
 
 > **Why one worker?** Collection is deliberately serialized by a process-level lock so the shared delay/page/rate budgets behave as product behavior. Multi-worker collection needs a separate concurrency redesign. Revocation and rate-limit state live in Redis, so a restart loses nothing. Threads within the process are safe — the SSRF connect-time guard is thread-local.
@@ -554,15 +606,23 @@ Full guide: [`docs/production_deployment.md`](./docs/production_deployment.md) �
 
 ---
 
-## Optional LLM Interpretation Layer
+## Optional LLM Interpretation and Product Discovery
 
-An optional LLM can write a short contextual reading of the numbers in an **enhanced** report. It is **not required** — with no key configured, a deterministic template fallback renders instead and the output is labelled as such.
+The existing legacy provider can write a short contextual reading of report numbers in **enhanced** mode. Structured product discovery has separate main/fallback provider slots, each with its own key, base URL, and model. Neither feature is required; with no credentials, reports use deterministic text and product discovery uses deterministic term extraction.
 
 ```env
 LLM_PROVIDER=openai_compatible
-LLM_BASE_URL=https://api.openai.com/v1
+LLM_BASE_URL=<provider-specific-base-url>
 LLM_API_KEY=<your-key-here>
-LLM_MODEL=gpt-4o-mini
+LLM_MODEL=<provider-specific-model>
+
+# Optional, independent providers for product discovery:
+LLM_MAIN_API_KEY=
+LLM_MAIN_BASE_URL=
+LLM_MAIN_MODEL=
+LLM_FALLBACK_API_KEY=
+LLM_FALLBACK_BASE_URL=
+LLM_FALLBACK_MODEL=
 ```
 
 | Provider | What you need | Where to get it |
@@ -575,7 +635,7 @@ LLM_MODEL=gpt-4o-mini
 
 - The LLM sees a `VERIFIED DATA` block of **aggregates only** — never raw review text — plus an optional `BUSINESS CONTEXT` block from the project's public website.
 - A system prompt explicitly forbids inventing numbers, claiming causation, or quoting reviews.
-- It is called by the **report layer only**, in `enhanced` mode only. Never by analysis, collection, or any workflow step.
+- The legacy provider is called by the report layer in `enhanced` mode. The separate product-discovery providers return validated identity/search suggestions and may refine an explicitly allow-listed source search after direct and scraping API levels fail. They do not participate in agent workflow branching.
 - On **any** failure (timeout, HTTP error, malformed JSON, exception), the deterministic interpretation renders and the section is labelled. The failure is audited.
 - `GET /api/v1/llm/status` returns a safe summary (`provider`, `model`, `configured`) for the UI badge. Never a key, never a full base URL.
 
@@ -634,9 +694,9 @@ Sentiment-Analysis-System-using-Agentic-AI/
 │   │       ├── llm/             # Optional LLM provider (deterministic default) + prompt builder
 │   │       └── *.py             # Sentiment, topic, aspect, keyword, trend, recommendation,
 │   │                            # summary, alert, report, collection, dataset, storage, audit
-│   ├── migrations/versions/     # 0001 → 0009 (single accepted chain)
+│   ├── migrations/versions/     # 0001 → 0016 (single accepted chain)
 │   ├── scripts/                 # Migration audit, smoke, load, backup & distributed drills
-│   ├── tests/                   # 40 test modules — 435 tests
+│   ├── tests/                   # Backend regression suite — 484 tests
 │   ├── fixtures/                # 70-row hand-labelled sentiment benchmark
 │   ├── .env.example             # Committed template, placeholders only
 │   ├── requirements.txt         # Pinned dependencies
@@ -680,6 +740,8 @@ Sentiment-Analysis-System-using-Agentic-AI/
 | [`docs/browser_walkthrough_report.md`](./docs/browser_walkthrough_report.md) | Browser walkthrough state |
 | [`docs/post_phase7_technical_debt.md`](./docs/post_phase7_technical_debt.md) | Full technical-debt register with priority |
 | [`docs/source_fallback_architecture.md`](./docs/source_fallback_architecture.md) · [`two_level_source_fallback.md`](./docs/two_level_source_fallback.md) | Approved-source fallback boundary |
+| [`docs/customer_cyber_intelligence.md`](./docs/customer_cyber_intelligence.md) | Verified customer/security intelligence scope and remaining gaps |
+| [`docs/vercel_frontend_deployment.md`](./docs/vercel_frontend_deployment.md) | Vercel frontend-only setup and backend runtime boundary |
 | [`SECURITY.md`](./SECURITY.md) | Threat model, hardening map, private reporting |
 
 ---
@@ -701,14 +763,14 @@ Stated plainly, because a system that hides its limits is harder to trust than o
 
 ### 🚧 Not built, not claimed
 
-- **The login submit button cannot be clicked with a mouse.** The decorative lamp fixture (`.lamp-fixture`, and the `.lamp-pull` cord control inside it) is absolutely positioned over the login panel and, unlike the other decorative layers, has no `pointer-events: none`, so it swallows the click. The form still submits with **Enter** from either field, so the flow works — but a mouse-only user cannot click *Continue*. This is a pre-existing CSS stacking bug in `src/styles/app.css`, unrelated to routing, and is **not fixed** here because it is a UI change outside the scope of the dependency upgrade. The fix is to add `pointer-events: none` to `.lamp-fixture` (keeping it on `.lamp-pull`, which is itself an interactive control).
+- **Login mouse interaction fix:** the lamp pull's transparent hit area overlapped the submit panel. Pointer events are now limited to the visible cord and handle so the form can receive clicks. The in-app browser was unavailable for visual interaction verification in the latest demo-readiness pass.
 - **An LLM in the orchestration loop** — the LangGraph engine ships and is verified, but no node calls a model. There is no planner, no tool-calling, no `interrupt()`. The graph is real; the agent reasoning is still deterministic.
 - **Checkpointed / resumable graph execution** — no LangGraph checkpointer is attached, because durable state stays in `agent_workflows` and a saver would add a 26th table. Resume is still the existing `waiting_for_approval` → approve → resume path.
-- **Background / async workflow execution** — a workflow runs to completion inside one HTTP request. There is no queue, no worker, no scheduler.
+- **Background investigation execution** — persisted investigations use a separate PostgreSQL-leased worker. Existing `agent_workflows` remain synchronous; investigation processing does not collect external sources.
 - **A real Reddit API client** — `PublicRedditCollector` always reports the source unavailable, even with credentials configured. The OAuth client itself is not implemented. Reddit is never scraped as HTML.
 - **A persistent collection scheduler** — collection is manual/on-demand only.
 - **Real S3 transfers** — the adapter is implemented and mock-tested; no live bucket was exercised.
-- **The containerized deployment path is not runtime-verified** — no Docker daemon on the verification host.
+- **Production deployment is not runtime-verified.** The isolated local Docker demo stack was started and exercised; this does not certify a production host, domain, TLS, storage service, or rollout.
 - **A complete end-to-end browser walkthrough of every page is not yet done.**
 - **One dead code path** exists in the agent layer: `app/services/agents/provider.py` is imported by nothing (superseded by `app/services/llm/`). The optional LLM is also unreachable from any workflow by design.
 - **`resume` can complete without producing a report** if the resuming user lacks `generate_report` (the step is skipped rather than re-gating).

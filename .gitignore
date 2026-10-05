@@ -50,3 +50,6 @@ node_modules/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Tool-generated files (coding assistants / IDEs)
+.zcodeignore

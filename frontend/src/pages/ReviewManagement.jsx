@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { reviewApi } from "../services/reviewApi";
 import { useToast } from "../contexts/ToastContext";
 import DataTable from "../components/DataTable";
@@ -10,6 +10,7 @@ import VaderBreakdown from "../components/VaderBreakdown";
 
 export default function ReviewManagement() {
   const { projectId } = useParams();
+  const [searchParams] = useSearchParams();
   const { showToast } = useToast();
   const [reviews, setReviews] = useState(null);
   const [error, setError] = useState(null);
@@ -22,6 +23,15 @@ export default function ReviewManagement() {
   const [aspectPanelReview, setAspectPanelReview] = useState(null);
   const [aspectPanelData, setAspectPanelData] = useState(null);
   const [breakdownReview, setBreakdownReview] = useState(null);
+  const [linkedReview, setLinkedReview] = useState(null);
+
+  useEffect(() => {
+    const reviewId = searchParams.get("review");
+    if (!reviewId) { setLinkedReview(null); return; }
+    reviewApi.get(reviewId)
+      .then((response) => setLinkedReview(response.data.data))
+      .catch((reason) => setError(reason));
+  }, [searchParams]);
 
   const load = () => {
     reviewApi.list(projectId, { search: search || undefined }).then((r) => setReviews(r.data.data.items)).catch(setError);
@@ -101,6 +111,13 @@ export default function ReviewManagement() {
       <h2 className="my-3">Reviews</h2>
       <ErrorAlert error={error} onDismiss={() => setError(null)} />
 
+      {linkedReview && (
+        <div className="alert alert-info" role="status">
+          <strong>Source review linked to the selected finding</strong>
+          <blockquote className="mb-0 mt-2">{linkedReview.text}</blockquote>
+        </div>
+      )}
+
       <FormInput placeholder="Search reviews..." value={search} onChange={(e) => setSearch(e.target.value)} />
 
       <DataTable
@@ -118,7 +135,34 @@ export default function ReviewManagement() {
                 <span onDoubleClick={() => startEdit(r)}>{r.text}</span>
               ),
           },
-          { key: "source", header: "Source" },
+          {
+            key: "source", header: "Source",
+            render: (r) => (
+              <div>
+                <span>{r.source || "Unknown"}</span>
+                {r.sourceUrl && (
+                  <a className="d-block small" href={r.sourceUrl} target="_blank" rel="noopener noreferrer">
+                    View source
+                  </a>
+                )}
+                {r.sourceRecordId && <span className="d-block text-muted small">Record {r.sourceRecordId}</span>}
+              </div>
+            ),
+          },
+          {
+            key: "provenance", header: "Collection",
+            render: (r) => {
+              const collection = r.sourceMetadata?.collection;
+              const identity = r.sourceMetadata?.identityMatch;
+              return (
+                <div className="small">
+                  {collection ? <span className="d-block">Level {collection.level} · {(collection.method || "collection").replaceAll("_", " ")}</span> : <span className="d-block text-muted">Imported / legacy</span>}
+                  {identity?.status && <span className="d-block">Identity: {identity.status}</span>}
+                  {r.sourceCollectedAt && <time className="d-block text-muted" dateTime={r.sourceCollectedAt}>{new Date(r.sourceCollectedAt).toLocaleString()}</time>}
+                </div>
+              );
+            },
+          },
           { key: "rating", header: "Rating" },
           { key: "reviewDate", header: "Date" },
           {

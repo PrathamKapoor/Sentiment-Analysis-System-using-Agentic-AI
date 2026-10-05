@@ -10,6 +10,7 @@ import FormInput from "../components/FormInput";
 import PermissionGuard from "../components/PermissionGuard";
 import ConfirmationModal from "../components/ConfirmationModal";
 import LlmStatusBadge from "../components/LlmStatusBadge";
+import { investigationApi } from "../services/investigationApi";
 
 const SECTIONS = [
   ["projectOverview", "Project Overview"], ["executiveSummary", "Executive Summary"],
@@ -17,6 +18,8 @@ const SECTIONS = [
   ["topicAnalysis", "Topic Analysis"], ["keywordAnalysis", "Keyword Analysis"],
   ["aspectSentiment", "Aspect-Based Sentiment"], ["recommendations", "Recommendations"],
   ["alerts", "Alerts"], ["representativeReviews", "Representative Reviews"], ["conclusion", "Conclusion"],
+  ["securityFindings", "Security Findings"],
+  ["investigationFindings", "Investigation Findings"],
 ];
 
 const STATUS_BADGE = { queued: "secondary", running: "info", complete: "success", failed: "danger" };
@@ -32,6 +35,7 @@ export default function ReportsPage() {
   const { projectId } = useParams();
   const { showToast } = useToast();
   const [reports, setReports] = useState(null);
+  const [investigations, setInvestigations] = useState([]);
   const [error, setError] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -40,12 +44,16 @@ export default function ReportsPage() {
     sections: ["projectOverview", "sentimentDistribution"],
     mode: "standard",
     includeAiSummary: false, includeRecommendations: false, includeRepresentativeReviews: false,
+    investigationId: "",
   });
 
   const load = () => {
     reportApi.list(projectId).then((r) => setReports(r.data.data.items)).catch(setError);
   };
   useEffect(load, [projectId]);
+  useEffect(() => {
+    investigationApi.list(projectId).then((r) => setInvestigations(r.data.data.items || [])).catch(() => setInvestigations([]));
+  }, [projectId]);
 
   const toggleSection = (key) => {
     setForm((f) => ({
@@ -55,14 +63,14 @@ export default function ReportsPage() {
   };
 
   const generate = async () => {
-    if (!form.dateFrom || !form.dateTo) {
-      setError({ message: "Select a date range" });
-      return;
-    }
     setGenerating(true);
     setError(null);
     try {
-      await reportApi.create(projectId, form);
+      const payload = { ...form };
+      if (!payload.dateFrom) delete payload.dateFrom;
+      if (!payload.dateTo) delete payload.dateTo;
+      if (!payload.investigationId) delete payload.investigationId;
+      await reportApi.create(projectId, payload);
       showToast("Report generated");
       load();
     } catch (err) {
@@ -113,11 +121,11 @@ export default function ReportsPage() {
               <FormInput label="Report name" value={form.reportName} onChange={(e) => setForm({ ...form, reportName: e.target.value })} />
             </div>
             <div className="col-md-3">
-              <label className="form-label">From</label>
+              <label className="form-label">From (optional)</label>
               <input type="date" className="form-control" aria-label="Date range from" value={form.dateFrom} onChange={(e) => setForm({ ...form, dateFrom: e.target.value })} />
             </div>
             <div className="col-md-3">
-              <label className="form-label">To</label>
+              <label className="form-label">To (optional)</label>
               <input type="date" className="form-control" aria-label="Date range to" value={form.dateTo} onChange={(e) => setForm({ ...form, dateTo: e.target.value })} />
             </div>
             <div className="col-md-2">
@@ -128,6 +136,21 @@ export default function ReportsPage() {
               </select>
             </div>
           </div>
+          <p className="form-text">Leave both dates blank to include all available reviews. Either date can be set on its own.</p>
+
+          {form.sections.includes("investigationFindings") && (
+            <div className="mb-3">
+              <label className="form-label" htmlFor="report-investigation">Investigation to include</label>
+              <select id="report-investigation" className="form-select" value={form.investigationId}
+                onChange={(e) => setForm({ ...form, investigationId: e.target.value })}>
+                <option value="">Select an investigation</option>
+                {investigations.filter((item) => ["COMPLETED", "NEEDS_REVIEW", "LIMIT_REACHED"].includes(item.status)).map((item) => (
+                  <option key={item.id} value={item.id}>{item.question} ({item.status.toLowerCase()})</option>
+                ))}
+              </select>
+              <div className="form-text">Only completed investigations with project-scoped evidence are available.</div>
+            </div>
+          )}
 
           <fieldset className="mb-2">
             <legend className="form-label small mb-1">Report mode</legend>
@@ -215,7 +238,7 @@ export default function ReportsPage() {
           columns={[
             { key: "reportName", header: "Name" },
             { key: "fileFormat", header: "Format", render: (r) => r.fileFormat.toUpperCase() },
-            { key: "dateRange", header: "Date Range", render: (r) => `${r.dateRangeStart} → ${r.dateRangeEnd}` },
+            { key: "dateRange", header: "Date Range", render: (r) => r.dateRangeStart || r.dateRangeEnd ? `${r.dateRangeStart || "Any date"} → ${r.dateRangeEnd || "Any date"}` : "All available dates" },
             {
               key: "mode",
               header: "Mode",

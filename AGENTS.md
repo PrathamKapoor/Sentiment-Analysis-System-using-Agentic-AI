@@ -5,8 +5,8 @@
 
 > Canonical repository: `C:\Sentiment Analysis Management System using Agentic AI`
 > Documentation vault: `C:\pratham_normaldev`
-> Production status: Phase 1–7 complete; feature-frozen
-> Immediate priority: real browser walkthrough
+> Production status: Phase 1–7 production baseline; explicitly requested customer/security intelligence work is a local, not-yet-released extension
+> Immediate priority: verify migrations, regression suites, and browser workflow before release
 
 All coding agents, AI coding assistants, CLI agents, contributors, and automated
 tools MUST read this file before modifying the repository.
@@ -106,7 +106,12 @@ is explicitly requested.
 
 ---
 
-# 4. Canonical Current Baseline
+# 4. Pre-Extension Verification Baseline
+
+The values below are the verified baseline before the explicitly authorized
+2026-10-04 customer/security implementation. They are historical, not the
+current working-tree test count or schema head. See `docs/handoff.md` for the
+latest verification state after implementation.
 
 ```text
 435 passed
@@ -197,12 +202,17 @@ Prototype tests are separate from production backend tests.
 Vite production build: PASS
 ```
 
-## Production database
+## Pre-change production database baseline
 
 ```text
 Tables: 25
 Migration head: 0009
 ```
+
+The explicitly authorized local implementation adds migrations `0010`–`0014`
+and 2 application tables (27 total at the new head). This working-tree schema
+has passed the isolated PostgreSQL upgrade → downgrade-to-0009 → re-upgrade
+audit. It has **not** been applied to or certified on a production deployment.
 
 Migration `0009` adds the optional Phase 9 layers: a `projects.website_url`
 column, a new `project_website_context` table (one row per project,
@@ -246,7 +256,10 @@ Do not add optional infrastructure before these priorities are complete.
 
 # 6. Feature Freeze
 
-Production is **FEATURE-FROZEN**.
+Production remains feature-frozen for unrelated work. The user's current
+explicit product-convergence request authorizes the scoped additions being
+implemented in this working tree; it does not authorize deployment, commit, or
+push.
 
 Do NOT add unless explicitly requested:
 
@@ -257,7 +270,7 @@ Do NOT add unless explicitly requested:
 - an LLM in the orchestration control loop, or any model-directed branching,
   tool-calling, or `interrupt()`-based approval;
 - a LangGraph checkpointer (durable workflow state must stay in
-  `agent_workflows`; a saver would mean a 26th table and a second source
+  `agent_workflows`; a saver would create another table and a second source
   of truth);
 - mandatory LLM/cloud-AI dependency;
 - Celery or Redis;
@@ -603,8 +616,9 @@ checks. Backend authorization is mandatory.
 
 # 19. Production Database and Migrations
 
-Production schema contains **25 application tables** (26 relations including
-`alembic_version`).
+The pre-change deployed schema contains **25 application tables** (26 relations
+including `alembic_version`). The authorized working-tree chain through 0014
+contains 27 application tables; it is not yet deployed.
 
 Areas:
 
@@ -615,10 +629,10 @@ role_permissions, member_roles
 
 Projects:
 projects, project_members, project_website_context,
-project_aspect_vocabulary
+project_aspect_vocabulary, project_entities
 
 Data:
-data_sources, datasets, reviews
+data_sources, datasets, reviews (including keyword-match annotations)
 
 Analysis:
 sentiment_results, topics, review_topics, aspects, aspect_sentiments
@@ -627,7 +641,7 @@ Decision Support:
 recommendations, ai_summaries
 
 Operations:
-alerts, reports, audit_logs, agent_workflows
+alerts, reports, audit_logs, agent_workflows, security_findings
 ```
 
 Older 21/22/23-table counts are stale unless explicitly historical.
@@ -636,6 +650,8 @@ Accepted migration chain:
 
 ```text
 0001 -> 0002 -> 0003 -> 0004 -> 0005 -> 0006 -> 0007 -> 0008 -> 0009
+     -> 0010 -> 0011 -> 0012 -> 0013 -> 0014
+     -> 0015 -> 0016 -> 0017
 ```
 
 Do NOT delete, renumber, or casually edit accepted migrations. Do not replace
@@ -669,7 +685,7 @@ P1 = OPEN
 A proper validation should include, where practical:
 
 1. empty disposable PostgreSQL DB;
-2. migration `0001 -> 0009`;
+2. migration `0001 -> 0014`;
 3. table/schema count and migration head;
 4. latest downgrade and re-upgrade;
 5. seed operation;
@@ -1109,7 +1125,7 @@ Set-Location "C:\Sentiment Analysis Management System using Agentic AI\backend"
 python -m pytest -v
 ```
 
-Expected current baseline:
+Pre-change production-suite baseline (before the explicitly authorized additions):
 
 ```text
 435 passed, 0 failed, 2 warnings
@@ -1406,8 +1422,13 @@ ddd4bff
 Known local restore tag:
 baseline-pre-postgresql
 
-Production backend:
+Pre-extension production backend baseline:
 435 passed
+0 failed
+2 warnings
+
+Current local suite with authorized unreleased extensions:
+466 passed
 0 failed
 2 warnings
 
@@ -1417,11 +1438,17 @@ Prototype:
 Frontend:
 Vite production build PASS
 
-Production tables:
-25
+Pre-extension deployed production tables:
+25 application tables
+
+Current local verification after migration 0017:
+514 passed, 0 failed, 2 warnings (2026-10-04); after the final discovery-prompt adjustment, the focused discovery/collection suites added 29 passed
+
+Current local migration 0017 schema:
+32 application tables (33 relations including alembic_version)
 
 Migration head:
-0009
+0017 (working tree; pre-change deployed baseline remains 0009)
 
 Agent system:
 two equivalent orchestrators — custom deterministic runner (default) and

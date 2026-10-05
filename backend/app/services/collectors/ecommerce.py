@@ -101,6 +101,22 @@ class AmazonIndiaAdapter(EcommerceAdapter):
         match = _AMAZON_ASIN.search(urlparse(url).path)
         return match.group(1).upper() if match else None
 
+    @staticmethod
+    def extract_product_title(html):
+        """Extract a bounded public product title for source-scoped matching."""
+        soup = BeautifulSoup(html, "html.parser")
+        title = _text_or_none(soup.select_one("#productTitle"))
+        if not title:
+            meta = soup.select_one('meta[property="og:title"][content], meta[name="title"][content]')
+            title = (meta.get("content") or "").strip() if meta else None
+        if not title:
+            title = _text_or_none(soup.title)
+        if not title:
+            return None
+        title = re.sub(r"\s+", " ", title).strip()
+        title = re.sub(r"\s*:\s*Amazon\.in.*$", "", title, flags=re.I).strip()
+        return title[:500] or None
+
     def discover_review_url(self, html, product_url):
         """Find Amazon's own public review link and retain the same ASIN.
 
@@ -503,6 +519,8 @@ class EcommerceCollector(StaticHTMLCollector):
         product_html = self._fetch_stage(
             session, normalized_url, adapter, "product", result,
         )
+        if isinstance(adapter, AmazonIndiaAdapter):
+            result.product_title = adapter.extract_product_title(product_html)
         discovered_url = adapter.discover_review_url(product_html, result.product_page_final_url or normalized_url)
         if discovered_url:
             review_url = discovered_url
@@ -674,6 +692,7 @@ class EcommerceCollector(StaticHTMLCollector):
             }.get(result.adapter, "GenericEcommerceAdapter"),
             "normalizedUrl": result.normalized_url,
             "productIdentity": result.product_identity,
+            "productTitle": getattr(result, "product_title", None),
             "productPageStatus": result.product_page_status,
             "productPageHttpStatus": result.product_page_http_status,
             "productPageFinalUrl": result.product_page_final_url,

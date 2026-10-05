@@ -1,6 +1,7 @@
 from app.services.collectors.static_html import StaticHTMLCollector
 from app.services.collectors.ecommerce import EcommerceCollector
 from app.services.collectors.reddit_collector import PublicRedditCollector
+from app.services.collectors.github_issues import GitHubIssuesCollector
 
 # One HTML-scraping adapter covers every type that's just "a web page with
 # review-like content" — review_site/ecommerce/forum/blog/news/survey only
@@ -15,6 +16,7 @@ _REGISTRY = {
     "news": StaticHTMLCollector,
     "survey": StaticHTMLCollector,
     "reddit": PublicRedditCollector,
+    "github_issues": GitHubIssuesCollector,
 }
 
 

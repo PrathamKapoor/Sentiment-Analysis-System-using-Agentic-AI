@@ -45,7 +45,10 @@ def _write_sheet(wb, title, headers, rows, widths=None, date_columns=None):
         cell.fill = HEADER_FILL
         cell.font = HEADER_FONT
     for row in rows:
-        ws.append(row)
+        # Spreadsheet applications interpret leading =, +, -, and @ as
+        # formulas. Review text and source labels are untrusted content, so
+        # preserve them as literal strings in exported workbooks.
+        ws.append([_safe_cell_value(value) for value in row])
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{max(len(rows) + 1, 1)}"
     for idx, width in enumerate(widths or [20] * len(headers), start=1):
@@ -56,6 +59,13 @@ def _write_sheet(wb, title, headers, rows, widths=None, date_columns=None):
     return ws
 
 
+def _safe_cell_value(value):
+    formula_prefixes = ("=", "+", "-", "@")
+    if isinstance(value, str) and value.lstrip(" \t\r\n\ufeff").startswith(formula_prefixes):
+        return "'" + value
+    return value
+
+
 def generate_excel(file_path, organisation_name, project_name, date_from, date_to, sections_data, skipped_sections):
     wb = Workbook()
     wb.remove(wb.active)  # drop the default blank sheet
@@ -63,7 +73,7 @@ def generate_excel(file_path, organisation_name, project_name, date_from, date_t
     summary_rows = [
         ["Organisation", organisation_name],
         ["Project", project_name],
-        ["Date range", f"{date_from} to {date_to}"],
+        ["Date range", f"{date_from or 'all'} to {date_to or 'all'}"],
         ["Generated", dt.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")],
         ["Report type", "AI/System Generated"],
     ]
@@ -129,6 +139,80 @@ def generate_excel(file_path, organisation_name, project_name, date_from, date_t
             wb, "Reviews", ["Text", "Source", "Rating", "Date"], rows, widths=[70, 20, 10, 15],
             date_columns={4: "YYYY-MM-DD"},
         )
+
+    if "securityFindings" in sections_data:
+        rows = []
+        for finding in sections_data["securityFindings"]:
+            evidence = " | ".join(
+                str(item.get("text", "")) for item in finding.get("evidence", [])
+            )
+            rows.append([
+                finding["findingType"], finding["severity"], finding["status"],
+                finding.get("confidence"), finding["classificationMethod"],
+                finding["reviewId"], finding.get("source") or "unknown",
+                finding.get("sourceUrl") or "", finding.get("reviewDate"),
+                finding.get("retrievedAt"), evidence,
+            ])
+        _write_sheet(
+            wb, "Security Findings",
+            ["Finding", "Severity", "Status", "Confidence (null = uncalibrated)",
+             "Classification Method", "Review ID", "Source", "Source URL", "Review Date",
+             "Retrieved At", "Evidence"],
+            rows, widths=[28, 14, 18, 24, 30, 38, 18, 45, 16, 28, 70],
+            date_columns={9: "YYYY-MM-DD", 10: "YYYY-MM-DD HH:MM"},
+        )
+
+    if "investigationFindings" in sections_data:
+        investigation = sections_data["investigationFindings"]
+        rows = [["Question", investigation["question"]], ["Status", investigation["status"]],
+                ["Semantic synthesis", investigation.get("semanticSynthesis", {}).get("status", "unavailable")],
+                ["Answer", investigation.get("answer", "")]]
+        for finding in investigation.get("findings", []):
+            rows.append([finding["status"], finding["type"], finding["claim"], finding["reviewState"], finding.get("recommendedAction") or ""])
+            for evidence in finding.get("evidence", []):
+                rows.append(["Evidence", evidence["evidenceId"], evidence["source"], evidence.get("date") or "", evidence["text"]])
+        _write_sheet(wb, "Investigation", ["Type", "Finding", "Claim / value", "Review state", "Evidence / action"], rows, widths=[22, 38, 90, 22, 90])
+
+    if "sourceProvenance" in sections_data:
+        provenance = sections_data["sourceProvenance"]
+        rows = [[
+            source["source"], source["sourceType"], source["originId"],
+            source["collectionMethod"], source.get("sourceUrl") or "",
+            source["recordCount"], source.get("canonicalEvidenceCount", source["recordCount"]),
+            source.get("duplicateRecordCount", 0), source.get("duplicateRelationshipCount", 0),
+            source.get("samplingNote", ""), _parse_date(source.get("firstReviewDate")),
+            _parse_date(source.get("lastReviewDate")), source["undatedRecordsIncluded"],
+            ", ".join(str(level) for level in source.get("collectionLevels", [])),
+            ", ".join(source.get("providers", [])),
+            ", ".join(f"{key}:{value}" for key, value in sorted(source.get("identityMatchStatusCounts", {}).items())),
+            source.get("collectionMetadataSampledRecords", 0),
+        ] for source in provenance["sources"]]
+        _write_sheet(
+            wb, "Sources",
+            ["Source", "Type", "Origin ID", "Collection Method", "Source URL",
+             "Eligible Source Records", "Canonical Evidence", "Duplicate Records", "Duplicate Relationships",
+             "Sampling Limitation", "First Review Date", "Last Review Date", "Undated Included",
+             "Collection Levels", "Providers", "Identity Match Counts", "Metadata Sample Size"],
+            rows, widths=[24, 20, 38, 55, 45, 22, 20, 20, 24, 55, 18, 18, 20, 18, 24, 30, 18],
+            date_columns={11: "YYYY-MM-DD", 12: "YYYY-MM-DD"},
+        )
+        wb["Sources"].append(["Project totals", "", "", "", "", provenance.get("recordCount", 0),
+            provenance.get("canonicalEvidenceCount", 0), "", provenance.get("duplicateRelationshipCount", 0),
+            provenance.get("definition", "")])
+        if provenance.get("truncated"):
+            wb["Sources"].append([
+                f"Truncated to top {provenance['maxSources']} source groups by eligible record count."
+            ])
+
+    if "methodology" in sections_data:
+        methodology = sections_data["methodology"]
+        rows = [
+            ["Report period", f"{methodology.get('dateFrom') or 'unspecified'} to {methodology.get('dateTo') or 'unspecified'}"],
+        ]
+        rows.extend([[item["label"], item["meaning"]] for item in methodology.get("trustLabels", [])])
+        rows.extend([["Method", method] for method in methodology.get("methods", [])])
+        rows.extend([["Limitation", limitation] for limitation in methodology.get("limitations", [])])
+        _write_sheet(wb, "Methodology", ["Category", "Description"], rows, widths=[28, 110])
 
     if "aiInterpretation" in sections_data:
         meta = sections_data["aiInterpretation"]

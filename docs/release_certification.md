@@ -257,3 +257,23 @@ in that exact arrangement). Uploads/reports on the host filesystem
 **Outside the runtime-verified evidence set**: Docker/compose runtime,
 gunicorn-in-container, nginx container, Trivy scanning, real S3, TLS
 termination, multi-host HA/failover, zero-downtime deployment.
+
+---
+
+## Demo-readiness addendum — 2026-10-04
+
+The historical Docker `ENVIRONMENT BLOCKED` entries above describe the
+certification run at the time they were written. On 2026-10-04, an isolated
+local Docker Compose stack was actually run on Windows with a fresh PostgreSQL
+18 container. The compose migration service completed through `0016`; the
+database, Redis, API, frontend, and investigations worker started; API
+readiness, synthetic dataset ingestion, analysis, a worker-claimed deterministic
+investigation, and PDF/Excel report generation/download were exercised.
+The local PostgreSQL schema reported 31 application tables, 53 foreign keys,
+and 97 indexes.
+
+This is local demo runtime evidence only. It does not certify a production
+deployment, a live domain/TLS configuration, S3, a Vercel deployment, a live
+LLM provider, or browser-rendered UI behavior. The in-app browser was
+unavailable. See the dated final demo-readiness section in `docs/handoff.md`
+for exact local checks and limitations.

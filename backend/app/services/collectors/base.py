@@ -52,6 +52,7 @@ class CollectorResult:
     result_code: str | None = None
     result_message: str | None = None
     product_identity: str | None = None
+    product_title: str | None = None
     product_page_status: str | None = None
     product_page_http_status: int | None = None
     product_page_final_url: str | None = None

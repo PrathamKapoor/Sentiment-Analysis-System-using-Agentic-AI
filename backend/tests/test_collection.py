@@ -241,6 +241,113 @@ def test_collect_inserts_reviews_linked_to_source(client, monkeypatch):
     assert source["lastCollectedAt"] is not None
 
 
+def test_github_collection_persists_record_provenance(client, monkeypatch):
+    from app.services.collectors import github_issues
+    from app.models import Review
+
+    _org_id, headers = owner_context(client)
+    project_id = create_project(client, headers)
+    source_id = _create_source(
+        client, headers, project_id,
+        url="https://github.com/example/project", type_="github_issues",
+    )
+    _mock_public_dns(monkeypatch, {"api.github.com"})
+
+    class Response:
+        status_code = 200
+        headers = {"Content-Length": "220"}
+        encoding = "utf-8"
+
+        def iter_content(self, chunk_size):
+            import json
+            yield json.dumps([{
+                "id": 1234, "number": 7, "title": "Checkout fails",
+                "body": "Payment is rejected.", "created_at": "2026-09-10T12:00:00Z",
+                "state": "open", "labels": [],
+            }]).encode()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(github_issues.requests, "get", lambda *args, **kwargs: Response())
+    response = client.post(f"/api/v1/sources/{source_id}/collect", headers=headers)
+    assert response.status_code == 200
+
+    review = Review.query.one()
+    assert review.source_record_id == "1234"
+    assert review.source_url == "https://github.com/example/project/issues/7"
+    assert review.source_metadata["provider"] == "GitHub REST API"
+    assert review.source_metadata["repository"] == "example/project"
+    assert review.source_collected_at is not None
+    api_review = client.get(f"/api/v1/projects/{project_id}/reviews", headers=headers).get_json()["data"]["items"][0]
+    assert api_review["sourceRecordId"] == "1234"
+    assert api_review["sourceUrl"] == "https://github.com/example/project/issues/7"
+
+
+def test_review_provenance_strips_credentials_query_and_oversized_metadata():
+    from app.services.collection_service import _review_provenance
+
+    record_id, source_url, metadata = _review_provenance({
+        "external_review_id": "issue-8",
+        "review_url": "https://person:secret@example.test/review/8?token=private#comment",
+        "source_metadata": {"payload": "x" * 9000},
+    })
+
+    assert record_id == "issue-8"
+    assert source_url == "https://example.test/review/8"
+    assert metadata == {}
+
+
+def test_review_provenance_keeps_ipv6_url_valid_and_rejects_nonstandard_json():
+    from app.services.collection_service import _review_provenance
+
+    _record_id, source_url, metadata = _review_provenance({
+        "review_url": "https://[2606:4700:4700::1111]:8443/issues/2",
+        "source_metadata": {"score": float("nan")},
+    })
+
+    assert source_url == "https://[2606:4700:4700::1111]:8443/issues/2"
+    assert metadata == {}
+
+
+def test_collection_uses_project_and_source_keywords_and_records_security_cues(client, monkeypatch):
+    org_id, headers = owner_context(client)
+    project_id = create_project(client, headers)
+    client.put(f"/api/v1/projects/{project_id}/entity", json={
+        "brand": "Example", "product": "Phone",
+        "includeKeywords": ["camera"], "excludeKeywords": ["case"],
+        "securityKeywords": ["account was taken over"],
+    }, headers=headers)
+    source_id = _create_source(client, headers, project_id)
+    client.patch(f"/api/v1/sources/{source_id}", json={"keywords": ["screen"]}, headers=headers)
+    _mock_public_dns(monkeypatch, {"reviews.example.test"})
+    html = """
+    <html><body>
+      <div class="review"><p class="review-text">Screen quality looks very clear.</p></div>
+      <div class="review"><p class="review-text">The camera is sharp but the case blocks buttons.</p></div>
+      <div class="review"><p class="review-text">Camera is clear; my account was taken over yesterday.</p></div>
+    </body></html>
+    """
+
+    def responder(url):
+        if url.endswith("/robots.txt"):
+            return _no_robots(url)
+        return _FakeResponse(html=html)
+    _mock_get(monkeypatch, responder)
+
+    response = client.post(f"/api/v1/sources/{source_id}/collect", headers=headers)
+    assert response.status_code == 200
+    result = response.get_json()["data"]
+    assert result["recordsFound"] == 3
+    assert result["recordsFilteredByKeywords"] == 1
+    assert result["recordsInserted"] == 2
+
+    reviews = client.get(f"/api/v1/projects/{project_id}/reviews", headers=headers).get_json()["data"]["items"]
+    assert len(reviews) == 2
+    flagged = next(review for review in reviews if "taken over" in review["text"])
+    assert flagged["keywordMatches"]["matchedSecurityKeywords"] == ["account was taken over"]
+
+
 def test_duplicate_detection_across_collection_runs(client, monkeypatch):
     org_id, headers = owner_context(client)
     project_id = create_project(client, headers)
@@ -339,6 +446,10 @@ def test_fallback_records_use_existing_ingestion_dedup_and_audit(client, monkeyp
     monkeypatch.setattr(collection_service, "RUNTIME_REGISTRY", ApprovedSourceRegistry([candidate], {"test-approved": ApprovedTestAdapter()}))
     org_id, headers = owner_context(client)
     project_id = create_project(client, headers, name="Samsung S25")
+    client.put(f"/api/v1/projects/{project_id}/entity", json={
+        "brand": "Samsung", "product": "Galaxy S25", "model": "S25",
+        "aliases": ["Samsung S25", "Galaxy S25"],
+    }, headers=headers)
     source_id = _create_source(client, headers, project_id)
     _mock_public_dns(monkeypatch, {"reviews.example.test"})
     _mock_get(monkeypatch, lambda url: _no_robots(url) if url.endswith("/robots.txt") else _FakeResponse(html="<html><body>No direct reviews</body></html>"))
@@ -354,6 +465,55 @@ def test_fallback_records_use_existing_ingestion_dedup_and_audit(client, monkeyp
     assert {review.source for review in Review.query.filter_by(project_id=project_id).all()} == {"Test Provider"}
     audit = AuditLog.query.filter_by(entity_type="data_source", entity_id=source_id, action="collection.completed").one()
     assert audit.event_metadata["fallback"]["actualSource"].startswith("Reddit")
+
+
+def test_amazon_sign_in_stops_direct_collection_then_tries_approved_fallback(client, app, monkeypatch):
+    import app.services.collection_service as collection_service
+    from app.errors.exceptions import CollectionError
+    from app.services.source_fallback import ApprovedSourceRegistry, Candidate, SourceAdapter
+
+    class AmazonSignInCollector:
+        collector_type = "ecommerce"
+        def validate_source(self, source): pass
+        def collect(self, source, options):
+            raise CollectionError(
+                "Amazon India returned a sign in page during the review page request.",
+                code="COLLECTION_BLOCKED",
+                details={
+                    "adapter": "amazon_india", "reviewPageStatus": "SIGN_IN",
+                    "productIdentity": "B012345678",
+                    "productTitle": "Samsung Galaxy S25 Ultra 256GB",
+                },
+            )
+
+    class ApprovedTestAdapter(SourceAdapter):
+        queried_aliases = None
+        def validate_configuration(self): pass
+        def is_available(self): return True
+        def search(self, entity, aliases, budget):
+            self.queried_aliases = aliases
+            return {"ok": True}
+        def normalize(self, response):
+            return [{"review_text": "Samsung Galaxy S25 Ultra 256GB display is excellent and battery lasts all day."}]
+        def provenance(self, response): return "Reddit public discussions via official OAuth API"
+
+    candidate = Candidate("test-approved", "Test Provider", "Documented API", "https://docs.example.test", "https://api.example.test", "discussion", status="APPROVED")
+    adapter = ApprovedTestAdapter()
+    monkeypatch.setattr(collection_service, "RUNTIME_REGISTRY", ApprovedSourceRegistry([candidate], {"test-approved": adapter}))
+    monkeypatch.setattr(collection_service, "_require_collector", lambda source, limits: AmazonSignInCollector())
+    monkeypatch.setattr(collection_service, "_policy_for", lambda source, collector, limits: "allowed")
+    app.config.update(PRODUCT_DISCOVERY_LLM_ENABLED=False, COLLECTION_SCRAPING_ENABLED=False)
+    org_id, headers = owner_context(client)
+    project_id = create_project(client, headers, name="Samsung Galaxy S25")
+    source_id = _create_source(client, headers, project_id, url="https://www.amazon.in/dp/B012345678", type_="ecommerce")
+    response = client.post(f"/api/v1/sources/{source_id}/collect", headers=headers)
+    assert response.status_code == 200, response.get_json()
+    body = response.get_json()["data"]
+    assert body["collectionLevel"] == 3
+    assert body["fallback"]["actualSource"].startswith("Reddit")
+    assert body["recordsInserted"] == 1
+    assert "Samsung Galaxy S25 Ultra 256GB" in adapter.queried_aliases
+    assert "B012345678" in adapter.queried_aliases
 
 
 def test_timeout_reported_as_collection_timeout(client, monkeypatch):

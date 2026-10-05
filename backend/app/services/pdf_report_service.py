@@ -61,7 +61,7 @@ def generate_pdf(file_path, organisation_name, project_name, date_from, date_to,
 
     story.append(Paragraph(f"{project_name} — Sentiment Analysis Report", styles["ReportTitle"]))
     story.append(Paragraph(
-        f"Organisation: {organisation_name} &nbsp;|&nbsp; Date range: {date_from} to {date_to} "
+        f"Organisation: {organisation_name} &nbsp;|&nbsp; Date range: {date_from or 'all'} to {date_to or 'all'} "
         f"&nbsp;|&nbsp; Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
         styles["ReportMeta"],
     ))
@@ -137,6 +137,97 @@ def generate_pdf(file_path, organisation_name, project_name, date_from, date_to,
     if "conclusion" in sections_data:
         story.append(Paragraph("Conclusion", styles["SectionHeading"]))
         story.append(Paragraph(sections_data["conclusion"], styles["Normal"]))
+
+    if "securityFindings" in sections_data:
+        story.append(Paragraph("Security Signals (Unverified Customer Reports)", styles["SectionHeading"]))
+        for finding in sections_data["securityFindings"]:
+            story.append(Paragraph(
+                f"<b>{_html_escape(finding['findingType'])}</b> — "
+                f"{_html_escape(finding['severity'])}; status: {_html_escape(finding['status'])}",
+                styles["Normal"],
+            ))
+            confidence = "not calibrated" if finding.get("confidence") is None else f"{finding['confidence']:.0%}"
+            story.append(Paragraph(
+                f"Review: {_html_escape(finding['reviewId'])} &nbsp;|&nbsp; "
+                f"Source: {_html_escape(finding.get('source') or 'unknown')} &nbsp;|&nbsp; "
+                f"Method: {_html_escape(finding['classificationMethod'])} &nbsp;|&nbsp; "
+                f"Confidence: {confidence}", styles["ReportMeta"],
+            ))
+            if finding.get("sourceUrl"):
+                story.append(Paragraph(f"Source URL: {_html_escape(finding['sourceUrl'])}", styles["ReportMeta"]))
+            for evidence in finding.get("evidence", []):
+                story.append(Paragraph(f"Evidence: {_html_escape(evidence.get('text', ''))}", styles["Normal"]))
+            story.append(Spacer(1, 6))
+
+    if "investigationFindings" in sections_data:
+        investigation = sections_data["investigationFindings"]
+        story.append(Paragraph("Evidence-Grounded Investigation", styles["SectionHeading"]))
+        story.append(Paragraph(f"Question: {_html_escape(investigation['question'])}", styles["Normal"]))
+        story.append(Paragraph(f"Status: {_html_escape(investigation['status'])}; semantic synthesis: {_html_escape(investigation.get('semanticSynthesis', {}).get('status', 'unavailable'))}", styles["ReportMeta"]))
+        if investigation.get("answer"):
+            story.append(Paragraph(_html_escape(investigation["answer"]).replace("\n", "<br/>"), styles["Normal"]))
+        for finding in investigation.get("findings", []):
+            story.append(Paragraph(f"<b>{_html_escape(finding['status'])} — {_html_escape(finding['type'])}</b>: {_html_escape(finding['claim'])}", styles["Normal"]))
+            story.append(Paragraph(f"Human review: {_html_escape(finding['reviewState'])}", styles["ReportMeta"]))
+            if finding.get("recommendedAction"):
+                story.append(Paragraph(f"Recommended action: {_html_escape(finding['recommendedAction'])}", styles["Normal"]))
+            for evidence in finding.get("evidence", []):
+                story.append(Paragraph(f"Evidence {evidence['evidenceId']} ({_html_escape(evidence['source'])}): {_html_escape(evidence['text'])}", styles["ReportMeta"]))
+
+    if "sourceProvenance" in sections_data:
+        story.append(Paragraph("Data Source Provenance", styles["SectionHeading"]))
+        provenance = sections_data["sourceProvenance"]
+        story.append(Paragraph(
+            f"{provenance.get('recordCount', 0)} eligible source records; "
+            f"{provenance.get('canonicalEvidenceCount', 0)} canonical evidence records; "
+            f"{provenance.get('duplicateRelationshipCount', 0)} explicit duplicate relationships. "
+            f"{_html_escape(provenance.get('definition', ''))}", styles["ReportMeta"],
+        ))
+        for source in provenance["sources"]:
+            first_date = source.get("firstReviewDate") or "unknown"
+            last_date = source.get("lastReviewDate") or "unknown"
+            undated = "; undated reviews included" if source.get("undatedRecordsIncluded") else ""
+            story.append(Paragraph(
+                f"<b>{_html_escape(source['source'])}</b> — {_html_escape(source['sourceType'])}; "
+                f"{source['recordCount']} eligible records; {source.get('canonicalEvidenceCount', source['recordCount'])} canonical; "
+                f"{source.get('duplicateRecordCount', 0)} duplicate records; dates: "
+                f"{_html_escape(first_date)} to {_html_escape(last_date)}{undated}", styles["Normal"],
+            ))
+            story.append(Paragraph(f"Method: {_html_escape(source['collectionMethod'])}", styles["ReportMeta"]))
+            if source.get("collectionLevels") or source.get("providers") or source.get("identityMatchStatusCounts"):
+                levels = ", ".join(str(level) for level in source.get("collectionLevels", [])) or "unknown"
+                providers = ", ".join(source.get("providers", [])) or "none recorded"
+                matches = ", ".join(f"{key}: {value}" for key, value in sorted(source.get("identityMatchStatusCounts", {}).items())) or "not recorded"
+                story.append(Paragraph(
+                    f"Collection level(s): {_html_escape(levels)}; provider(s): {_html_escape(providers)}; "
+                    f"identity matches: {_html_escape(matches)} (sampled {source.get('collectionMetadataSampledRecords', 0)} records).",
+                    styles["ReportMeta"],
+                ))
+            if source.get("sourceUrl"):
+                story.append(Paragraph(f"Source URL: {_html_escape(source['sourceUrl'])}", styles["ReportMeta"]))
+        if provenance.get("truncated"):
+            story.append(Paragraph(
+                f"Showing the top {provenance['maxSources']} source groups by eligible record count.",
+                styles["ReportMeta"],
+            ))
+
+    if "methodology" in sections_data:
+        methodology = sections_data["methodology"]
+        story.append(Paragraph("Methodology, Trust Labels, and Limitations", styles["SectionHeading"]))
+        story.append(Paragraph(
+            f"Report period: {_html_escape(str(methodology.get('dateFrom') or 'unspecified'))} "
+            f"to {_html_escape(str(methodology.get('dateTo') or 'unspecified'))}", styles["ReportMeta"],
+        ))
+        for entry in methodology.get("trustLabels", []):
+            story.append(Paragraph(
+                f"<b>{_html_escape(entry['label'])}:</b> {_html_escape(entry['meaning'])}", styles["Normal"]
+            ))
+        story.append(Paragraph("Methods", styles["Normal"]))
+        for method in methodology.get("methods", []):
+            story.append(Paragraph(f"&bull; {_html_escape(method)}", styles["Normal"]))
+        story.append(Paragraph("Limitations", styles["Normal"]))
+        for limitation in methodology.get("limitations", []):
+            story.append(Paragraph(f"&bull; {_html_escape(limitation)}", styles["Normal"]))
 
     if "aiInterpretation" in sections_data:
         meta = sections_data["aiInterpretation"]

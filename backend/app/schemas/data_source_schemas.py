@@ -1,10 +1,10 @@
 from marshmallow import Schema, fields, validate
 
-SOURCE_TYPES = ["review_site", "ecommerce", "reddit", "forum", "blog", "news", "survey"]
+SOURCE_TYPES = ["review_site", "ecommerce", "reddit", "github_issues", "forum", "blog", "news", "survey"]
 
 
 class CreateDataSourceSchema(Schema):
-    type = fields.String(required=True, validate=validate.OneOf(SOURCE_TYPES))
+    type = fields.String(required=False, allow_none=True, validate=validate.OneOf(SOURCE_TYPES))
     url = fields.String(required=True, validate=validate.Length(min=1))
     keywords = fields.List(fields.String(), load_default=list)
 

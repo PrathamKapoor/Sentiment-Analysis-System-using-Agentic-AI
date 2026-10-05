@@ -7,7 +7,7 @@ APPROVAL_STATUSES = ("draft", "approved", "rejected")
 class AiSummary(UUIDPrimaryKeyMixin, db.Model):
     __tablename__ = "ai_summaries"
     __table_args__ = (
-        db.CheckConstraint("date_range_end >= date_range_start", name="ck_ai_summary_date_range"),
+        db.CheckConstraint("date_range_start IS NULL OR date_range_end IS NULL OR date_range_end >= date_range_start", name="ck_ai_summary_date_range"),
     )
 
     # Approved schema exactly. summary_type/generation_method (Phase 5 brief
@@ -16,8 +16,8 @@ class AiSummary(UUIDPrimaryKeyMixin, db.Model):
     # generated_at/updated_at columns: generation is tracked via audit_logs,
     # created_at is generation time.
     project_id = db.Column(db.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
-    date_range_start = db.Column(db.Date, nullable=False)
-    date_range_end = db.Column(db.Date, nullable=False)
+    date_range_start = db.Column(db.Date, nullable=True)
+    date_range_end = db.Column(db.Date, nullable=True)
     content = db.Column(db.JSON, nullable=False, default=dict)
     approval_status = db.Column(db.String(20), nullable=False, default="draft", index=True)
     approved_by = db.Column(db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

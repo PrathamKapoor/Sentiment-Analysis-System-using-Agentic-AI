@@ -28,6 +28,7 @@ from app.services.llm import (
     get_provider,
     is_configured,
     reset_provider_cache,
+    configured_provider_chain,
 )
 from app.services.llm_service import interpret_analytics, provider_summary
 from app.services.llm.prompt_builder import build_prompt
@@ -83,6 +84,14 @@ def test_openai_compatible_provider_missing_key_is_unavailable():
     result = p.complete("hi")
     assert result.status == "unavailable"
     assert result.provider == "openai_compatible"
+
+
+def test_openai_compatible_provider_caps_configured_timeout():
+    provider = OpenAICompatibleProvider(
+        base_url="https://api.openai.com/v1", api_key="test", model="test",
+        timeout=600, max_tokens=64,
+    )
+    assert provider.timeout == 20
 
 
 def test_openai_compatible_provider_timeout(monkeypatch):
@@ -180,6 +189,45 @@ def test_is_configured_reflects_provider_name():
     assert is_configured() is True
 
 
+def test_main_and_fallback_llm_have_independent_credentials_urls_and_models(monkeypatch):
+    from app.services.llm.provider import reset_provider_cache
+    reset_provider_cache(None)
+    monkeypatch.setenv("LLM_MAIN_API_KEY", "main-secret")
+    monkeypatch.setenv("LLM_MAIN_BASE_URL", "https://main.example.test/v1")
+    monkeypatch.setenv("LLM_MAIN_MODEL", "main-model")
+    monkeypatch.setenv("LLM_FALLBACK_API_KEY", "fallback-secret")
+    monkeypatch.setenv("LLM_FALLBACK_BASE_URL", "https://fallback.example.test/v1")
+    monkeypatch.setenv("LLM_FALLBACK_MODEL", "fallback-model")
+    providers = configured_provider_chain()
+    assert [role for role, _provider in providers] == ["main", "fallback"]
+    assert providers[0][1].api_key == "main-secret"
+    assert providers[0][1].base_url == "https://main.example.test/v1"
+    assert providers[0][1].model == "main-model"
+    assert providers[1][1].api_key == "fallback-secret"
+    assert providers[1][1].base_url == "https://fallback.example.test/v1"
+    assert providers[1][1].model == "fallback-model"
+
+
+def test_provider_key_environment_references_are_resolved(monkeypatch):
+    from app.services.llm.provider import _role_provider
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "router-test-key")
+    monkeypatch.setenv("LLM_MAIN_API_KEY", "$OPENROUTER_API_KEY")
+    monkeypatch.setenv("LLM_MAIN_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("LLM_MAIN_MODEL", "poolside/laguna-s-2.1:free")
+    provider = _role_provider("main")
+    assert provider.api_key == "router-test-key"
+    assert provider.model == "poolside/laguna-s-2.1:free"
+
+
+def test_main_provider_url_credentials_are_rejected_and_never_echoed():
+    provider = OpenAICompatibleProvider(
+        base_url="https://user:secret@example.test/v1", api_key="test", model="m", timeout=1, max_tokens=10,
+    )
+    assert provider.is_available() is False
+    assert "secret" not in provider.base_url
+
+
 # ---------------- prompt builder tests ----------------
 
 
@@ -260,6 +308,37 @@ def test_facade_falls_back_when_provider_times_out(app):
     assert out["source"] == "deterministic"
     assert out["status"] == "timeout"
     assert out["warning"]
+
+
+def test_facade_uses_configured_text_fallback_before_deterministic(app, monkeypatch):
+    import app.services.llm_service as llm_service
+
+    reset_provider_cache(StubProvider(error={"status": "timeout", "error": "primary timeout"}))
+    monkeypatch.setattr(
+        llm_service,
+        "interpretation_fallback_provider",
+        lambda: StubProvider(default_text="NVIDIA fallback interpretation."),
+    )
+    with app.app_context():
+        out = interpret_analytics({"totalReviews": 1}, business_context=None)
+    assert out["source"] == "llm"
+    assert out["provider"] == "stub"
+    assert out["text"] == "NVIDIA fallback interpretation."
+
+
+def test_facade_uses_text_fallback_when_primary_is_unconfigured(app, monkeypatch):
+    import app.services.llm_service as llm_service
+
+    reset_provider_cache(DeterministicProvider())
+    monkeypatch.setattr(
+        llm_service,
+        "interpretation_fallback_provider",
+        lambda: StubProvider(default_text="NVIDIA fallback interpretation."),
+    )
+    with app.app_context():
+        out = interpret_analytics({"totalReviews": 1}, business_context=None)
+    assert out["source"] == "llm"
+    assert out["text"] == "NVIDIA fallback interpretation."
 
 
 def test_facade_silently_skips_audit_when_no_org_or_actor(app):

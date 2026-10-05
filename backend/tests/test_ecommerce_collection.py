@@ -58,6 +58,15 @@ def test_amazon_review_link_is_discovered_from_product_page():
     )
 
 
+def test_amazon_product_page_extracts_product_title_for_fallback_identity():
+    adapter = AmazonIndiaAdapter()
+    title = adapter.extract_product_title(
+        '<html><head><meta property="og:title" content="Acme Phone X 256GB"></head>'
+        '<body><span id="productTitle">Acme Phone X 256GB</span></body></html>'
+    )
+    assert title == "Acme Phone X 256GB"
+
+
 def test_amazon_fixture_extracts_reviews_with_optional_fields():
     adapter = AmazonIndiaAdapter()
     records, candidates, title = adapter.extract(fixture("amazon_reviews.html"), 10)

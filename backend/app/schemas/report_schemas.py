@@ -6,8 +6,8 @@ from app.services.report_data_service import ALL_SECTIONS
 
 class CreateReportSchema(Schema):
     reportName = fields.String(required=False, allow_none=True, validate=validate.Length(max=200))
-    dateFrom = fields.Date(required=True)
-    dateTo = fields.Date(required=True)
+    dateFrom = fields.Date(required=False, allow_none=True, load_default=None)
+    dateTo = fields.Date(required=False, allow_none=True, load_default=None)
     sections = fields.List(fields.String(validate=validate.OneOf(ALL_SECTIONS)), load_default=list)
     fileFormat = fields.String(required=True, validate=validate.OneOf(FILE_FORMATS))
     # ``standard`` (default): deterministic findings only, no LLM ever.
@@ -19,3 +19,4 @@ class CreateReportSchema(Schema):
     includeAiSummary = fields.Boolean(load_default=False)
     includeRecommendations = fields.Boolean(load_default=False)
     includeRepresentativeReviews = fields.Boolean(load_default=False)
+    investigationId = fields.String(required=False, allow_none=True, validate=validate.Length(min=36, max=36))

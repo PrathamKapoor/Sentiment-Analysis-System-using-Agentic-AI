@@ -6,8 +6,8 @@ import FormInput from "../components/FormInput";
 import PermissionGuard from "../components/PermissionGuard";
 import { useToast } from "../contexts/ToastContext";
 import { dataSourceApi } from "../services/dataSourceApi";
-
-const SOURCE_TYPES = ["review_site", "ecommerce", "reddit", "forum", "blog", "news", "survey"];
+import { entityApi } from "../services/entityApi";
+import { projectApi } from "../services/projectApi";
 
 function normalizedKeywords(values) {
   const seen = new Set();
@@ -16,6 +16,52 @@ function normalizedKeywords(values) {
     if (!value || seen.has(key)) return false;
     seen.add(key);
     return true;
+  });
+}
+
+function safeCanonicalUrl(value) {
+  try {
+    const input = new URL(value);
+    const safe = new URL(`${input.protocol}//${input.host}${input.pathname}`);
+    for (const key of ["pid", "lid", "asin"]) {
+      const identifier = input.searchParams.get(key);
+      if (identifier) safe.searchParams.set(key, identifier.slice(0, 200));
+    }
+    return safe.toString();
+  } catch {
+    return "";
+  }
+}
+
+async function autoConfigureEntity(projectId, source) {
+  const [projectResponse, entityResponse] = await Promise.all([
+    projectApi.get(projectId), entityApi.get(projectId),
+  ]);
+  const project = projectResponse.data.data;
+  const entity = entityResponse.data.data;
+  const description = [entity.brand, entity.product, entity.model]
+    .filter(Boolean).join(" ") || project.productOrTopic || project.name;
+  const canonicalUrl = safeCanonicalUrl(entity.canonicalUrl || source.url);
+  const discoveryResponse = await entityApi.discover(projectId, description, {
+    sku: entity.sku,
+    canonicalUrl,
+    identifiers: entity.identifiers,
+  });
+  const suggestions = discoveryResponse.data.data;
+  const merged = (existing, suggested) => normalizedKeywords([...(existing || []), ...(suggested || [])]);
+  await entityApi.save(projectId, {
+    brand: entity.brand || null,
+    product: entity.product || null,
+    model: entity.model || null,
+    sku: entity.sku || null,
+    canonicalUrl: canonicalUrl || null,
+    identifiers: { ...(entity.identifiers || {}), ...(suggestions.identifiers || {}) },
+    aliases: merged(entity.aliases, [...(suggestions.aliases || []), ...(suggestions.searchKeywords || [])]),
+    includeKeywords: merged(entity.includeKeywords, suggestions.includeKeywords),
+    excludeKeywords: merged(entity.excludeKeywords, suggestions.excludeKeywords),
+    securityKeywords: merged(entity.securityKeywords, suggestions.securityKeywords),
+    competitorKeywords: merged(entity.competitorKeywords, suggestions.competitorKeywords),
+    customKeywords: merged(entity.customKeywords, suggestions.customKeywords),
   });
 }
 
@@ -71,7 +117,10 @@ function FallbackDetails({ fallback }) {
       {fallback.actualSource && <span>Actual source: {fallback.actualSource}</span>}
       {fallback.terminalStatus === "API_CREDENTIALS_REQUIRED" && <span>Server-side provider credentials are required.</span>}
       {fallback.terminalStatus === "RATE_LIMITED" && <span>The provider is temporarily rate limited. Try again later.</span>}
-      {!provider && <span>No approved alternative source is currently available. You can upload a dataset instead.</span>}
+      {!provider && <>
+        <span>Amazon's sign-in restriction remains in place; it is never bypassed.</span>
+        <span>{fallback.terminalStatus === "NO_DATA_AVAILABLE" ? "No matching reviews came back from the approved alternatives." : "The approved alternatives could not return reviews on this attempt."} Try a public Flipkart product review URL or Reddit discussion URL; the system will detect the source and collect automatically.</span>
+      </>}
     </div>
   );
 }
@@ -122,6 +171,23 @@ function DiagnosticGrid({ result }) {
   return (
     <div className="collection-diagnostic-grid">
       {items.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}
+    </div>
+  );
+}
+
+function CollectionPipeline({ attempts }) {
+  if (!Array.isArray(attempts) || attempts.length === 0) return null;
+  return (
+    <div className="collection-fallback" aria-label="Collection levels">
+      <strong>Collection path</strong>
+      {attempts.map((attempt, index) => (
+        <span key={`${attempt.level}-${index}`}>
+          {attempt.level === 1 ? "Level 1 · Direct" : attempt.level === 2 ? "Level 2 · Scraping API" : attempt.method === "llm_assisted_approved_retrieval" ? "Level 3 · LLM-assisted retrieval" : "Level 3 · Approved API fallback"} · {attempt.status.replaceAll("_", " ")}
+          {attempt.provider ? ` · ${attempt.provider}` : ""}
+          {Number.isFinite(attempt.recordCount) ? ` · ${attempt.recordCount} records` : ""}
+          {attempt.reason ? ` · ${attempt.reason.replaceAll("_", " ")}` : ""}
+        </span>
+      ))}
     </div>
   );
 }
@@ -195,6 +261,7 @@ function CollectionDetails({ source, latestResult }) {
         </div>
       </div>
       <DiagnosticGrid result={displayResult} />
+      <CollectionPipeline attempts={displayResult?.collectionPipeline} />
       <FallbackDetails fallback={displayResult?.fallback} />
       {displayResult && (
         <details className="collection-technical">
@@ -296,13 +363,14 @@ export default function DataSourceManagement() {
   const [sources, setSources] = useState(null);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [busySourceId, setBusySourceId] = useState(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [latestResults, setLatestResults] = useState({});
   const [removeTarget, setRemoveTarget] = useState(null);
   const [removing, setRemoving] = useState(false);
-  const [form, setForm] = useState({ type: SOURCE_TYPES[0], url: "", keywords: "" });
+  const [form, setForm] = useState({ url: "" });
 
   const load = useCallback(async (isCancelled = () => false) => {
     try {
@@ -325,12 +393,22 @@ export default function DataSourceManagement() {
   }, [load]);
 
   const onCreate = async (event) => {
-    event.preventDefault(); setError(null);
+    event.preventDefault(); setError(null); setCreating(true);
     try {
-      await dataSourceApi.create(projectId, { type: form.type, url: form.url, keywords: normalizedKeywords([form.keywords]) });
-      showToast("Data source added.");
-      setShowForm(false); setForm({ type: SOURCE_TYPES[0], url: "", keywords: "" }); void load();
+      const response = await dataSourceApi.create(projectId, { url: form.url });
+      const source = response.data.data;
+      showToast("Source detected. Finding terms and starting collection automatically.");
+      setShowForm(false); setForm({ url: "" });
+      try {
+        await autoConfigureEntity(projectId, source);
+      } catch {
+        // Collection remains usable when the optional LLM or edit permission
+        // is unavailable; the deterministic collection fallback still runs.
+        showToast("Automatic term setup was unavailable; continuing with collection.", "warning");
+      }
+      await onCollect(source);
     } catch (requestError) { setError(requestError); }
+    finally { setCreating(false); }
   };
 
   const onToggle = async (source) => {
@@ -403,14 +481,12 @@ export default function DataSourceManagement() {
       <ErrorAlert error={error} onDismiss={() => setError(null)} />
       {showForm && (
         <form onSubmit={onCreate} className="card source-create-card">
-          <div className="form-section-heading"><div><span className="page-kicker">New source</span><h2>Add a public data source</h2></div></div>
+          <div className="form-section-heading"><div><span className="page-kicker">Automatic collection</span><h2>Paste a public URL</h2></div></div>
           <div className="source-create-grid">
-            <label className="form-label">Type<select className="form-select mt-1" value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}>{SOURCE_TYPES.map((type) => <option key={type} value={type}>{type.replace("_", " ")}</option>)}</select></label>
-            <FormInput label="Public URL" required value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} />
+            <FormInput label="Public URL" required value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} placeholder="https://…" />
           </div>
-          <FormInput label="Keywords (comma-separated, optional)" value={form.keywords} onChange={(event) => setForm({ ...form, keywords: event.target.value })} />
-          <p className="form-hint">For ecommerce product URLs, keywords help describe the analysis scope; they do not require every review to contain every term.</p>
-          <div><button className="btn btn-primary" type="submit">Add Source</button></div>
+          <p className="form-hint">We detect the source, generate product terms, and collect public reviews automatically. Approved alternatives are tried where source rules allow.</p>
+          <div><button className="btn btn-primary" type="submit" disabled={creating || Boolean(busySourceId)}>{creating ? "Finding terms…" : busySourceId ? "Collecting…" : "Add URL and Collect"}</button></div>
         </form>
       )}
       <div className="source-list">

@@ -10,7 +10,7 @@ from app.services.audit_service import log_action
 def create_summary(project_id, actor_user_id, summary_type, date_from, date_to):
     if summary_type not in SUMMARY_TYPES:
         raise ValidationError(f"summaryType must be one of: {', '.join(SUMMARY_TYPES)}")
-    if date_to < date_from:
+    if date_from is not None and date_to is not None and date_to < date_from:
         raise ValidationError("dateTo must not be before dateFrom")
 
     organisation_id = db.session.get(Project, project_id).organisation_id

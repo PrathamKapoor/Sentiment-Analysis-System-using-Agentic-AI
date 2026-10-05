@@ -62,6 +62,25 @@ class BaseConfig:
     # If Phase 7 orchestration ever needs a "safe test mode," add a
     # separate, narrowly-scoped mechanism — do not repurpose this flag.
     SCRAPER_ALLOW_PRIVATE_TARGETS = os.environ.get("SCRAPER_ALLOW_PRIVATE_TARGETS", "false").lower() == "true"
+
+    # Three-level collection controls. Defaults preserve direct collection;
+    # optional providers are inert until independently configured.
+    COLLECTION_DIRECT_ENABLED = os.environ.get("COLLECTION_DIRECT_ENABLED", "true").strip().lower() == "true"
+    COLLECTION_SCRAPING_ENABLED = os.environ.get("COLLECTION_SCRAPING_ENABLED", "true").strip().lower() == "true"
+    COLLECTION_LLM_FALLBACK_ENABLED = os.environ.get("COLLECTION_LLM_FALLBACK_ENABLED", "true").strip().lower() == "true"
+    COLLECTION_MAX_LEVEL = max(1, min(int(os.environ.get("COLLECTION_MAX_LEVEL", "3")), 3))
+    COLLECTION_REQUEST_TIMEOUT_SECONDS = max(1, min(int(os.environ.get("COLLECTION_REQUEST_TIMEOUT_SECONDS", "30")), 30))
+    COLLECTION_MAX_RESULTS_PER_SOURCE = max(1, min(int(os.environ.get("COLLECTION_MAX_RESULTS_PER_SOURCE", "100")), 500))
+    COLLECTION_REQUIRE_IDENTITY_MATCH = os.environ.get("COLLECTION_REQUIRE_IDENTITY_MATCH", "true").strip().lower() == "true"
+    PRODUCT_DISCOVERY_LLM_ENABLED = os.environ.get("PRODUCT_DISCOVERY_LLM_ENABLED", "true").strip().lower() == "true"
+    PRODUCT_DISCOVERY_MAX_KEYWORDS = max(1, min(int(os.environ.get("PRODUCT_DISCOVERY_MAX_KEYWORDS", "20")), 20))
+    SCRAPING_RAPIDAPI_KEY = os.environ.get("SCRAPING_RAPIDAPI_KEY", "")
+    SCRAPING_RAPIDAPI_ENABLED = os.environ.get("SCRAPING_RAPIDAPI_ENABLED", "false").strip().lower() == "true"
+    SCRAPING_RAPIDAPI_HOST = os.environ.get("SCRAPING_RAPIDAPI_HOST", "")
+    SCRAPING_RAPIDAPI_BASE_URL = os.environ.get("SCRAPING_RAPIDAPI_BASE_URL", "")
+    SCRAPING_RAPIDAPI_ENDPOINT = os.environ.get("SCRAPING_RAPIDAPI_ENDPOINT", "")
+    SCRAPING_RAPIDAPI_SOURCE_TYPES = os.environ.get("SCRAPING_RAPIDAPI_SOURCE_TYPES", "ecommerce")
+    SCRAPING_RAPIDAPI_REQUEST_DELAY_SECONDS = max(0.0, min(float(os.environ.get("SCRAPING_RAPIDAPI_REQUEST_DELAY_SECONDS", "1")), 60.0))
     # Agentic orchestration engine selection.
     #   "deterministic" (default) - the original plain-Python for-loop
     #                              orchestrator in services/agents/orchestrator.py

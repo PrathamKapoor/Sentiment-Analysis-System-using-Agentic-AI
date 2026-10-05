@@ -1,0 +1,741 @@
+-- =============================================================================
+-- AGENTIC AI-BASED SENTIMENT ANALYSIS MANAGEMENT SYSTEM
+-- COMPLETE POSTGRESQL DATABASE INITIALIZATION SCRIPT
+-- Target Database: PostgreSQL 14+
+-- Tables: 31 | Indexes: 49
+-- =============================================================================
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- -----------------------------------------------------------------------------
+-- Table: organisations
+-- -----------------------------------------------------------------------------
+CREATE TABLE organisations (
+	name VARCHAR(200) NOT NULL, 
+	plan VARCHAR(50) NOT NULL, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	PRIMARY KEY (id)
+);
+
+-- -----------------------------------------------------------------------------
+-- Table: permissions
+-- -----------------------------------------------------------------------------
+CREATE TABLE permissions (
+	code VARCHAR(50) NOT NULL, 
+	description TEXT NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	UNIQUE (code)
+);
+
+-- -----------------------------------------------------------------------------
+-- Table: users
+-- -----------------------------------------------------------------------------
+CREATE TABLE users (
+	email VARCHAR(255) NOT NULL, 
+	password_hash TEXT NOT NULL, 
+	name VARCHAR(150) NOT NULL, 
+	contact VARCHAR(30), 
+	profile_photo_url TEXT, 
+	notification_prefs JSON NOT NULL, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	PRIMARY KEY (id)
+);
+
+CREATE UNIQUE INDEX ix_users_email ON users (email);
+
+-- -----------------------------------------------------------------------------
+-- Table: audit_logs
+-- -----------------------------------------------------------------------------
+CREATE TABLE audit_logs (
+	organisation_id UUID NOT NULL, 
+	actor UUID NOT NULL, 
+	action VARCHAR(100) NOT NULL, 
+	entity_type VARCHAR(50) NOT NULL, 
+	entity_id VARCHAR(36) NOT NULL, 
+	timestamp TIMESTAMP WITH TIME ZONE NOT NULL, 
+	metadata JSON NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(organisation_id) REFERENCES organisations (id) ON DELETE CASCADE, 
+	FOREIGN KEY(actor) REFERENCES users (id) ON DELETE RESTRICT
+);
+
+CREATE INDEX ix_audit_logs_organisation_id ON audit_logs (organisation_id);
+CREATE INDEX ix_audit_logs_entity_type_entity_id_timestamp ON audit_logs (entity_type, entity_id, timestamp);
+
+-- -----------------------------------------------------------------------------
+-- Table: organisation_members
+-- -----------------------------------------------------------------------------
+CREATE TABLE organisation_members (
+	organisation_id UUID NOT NULL, 
+	user_id UUID NOT NULL, 
+	status VARCHAR(20) NOT NULL, 
+	invited_at TIMESTAMP WITH TIME ZONE, 
+	joined_at TIMESTAMP WITH TIME ZONE, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_org_member UNIQUE (organisation_id, user_id), 
+	FOREIGN KEY(organisation_id) REFERENCES organisations (id) ON DELETE CASCADE, 
+	FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE RESTRICT
+);
+
+CREATE INDEX ix_organisation_members_organisation_id ON organisation_members (organisation_id);
+CREATE INDEX ix_organisation_members_user_id ON organisation_members (user_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: projects
+-- -----------------------------------------------------------------------------
+CREATE TABLE projects (
+	organisation_id UUID NOT NULL, 
+	name VARCHAR(200) NOT NULL, 
+	description TEXT, 
+	product_or_topic VARCHAR(200), 
+	start_date DATE, 
+	end_date DATE, 
+	status VARCHAR(20) NOT NULL, 
+	website_url VARCHAR(2048), 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(organisation_id) REFERENCES organisations (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_projects_organisation_id ON projects (organisation_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: roles
+-- -----------------------------------------------------------------------------
+CREATE TABLE roles (
+	organisation_id UUID, 
+	name VARCHAR(100) NOT NULL, 
+	is_custom BOOLEAN NOT NULL, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_role_org_name UNIQUE (organisation_id, name), 
+	FOREIGN KEY(organisation_id) REFERENCES organisations (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_roles_organisation_id ON roles (organisation_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: agent_workflows
+-- -----------------------------------------------------------------------------
+CREATE TABLE agent_workflows (
+	project_id UUID NOT NULL, 
+	workflow_type VARCHAR(30) NOT NULL, 
+	status VARCHAR(30) NOT NULL, 
+	options JSON NOT NULL, 
+	idempotency_key VARCHAR(100), 
+	result_summary JSON NOT NULL, 
+	started_by UUID NOT NULL, 
+	started_at TIMESTAMP WITH TIME ZONE, 
+	completed_at TIMESTAMP WITH TIME ZONE, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_agent_workflow_idempotency UNIQUE (project_id, idempotency_key), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE, 
+	FOREIGN KEY(started_by) REFERENCES users (id) ON DELETE RESTRICT
+);
+
+CREATE INDEX ix_agent_workflows_project_id_status ON agent_workflows (project_id, status);
+CREATE INDEX ix_agent_workflows_project_id ON agent_workflows (project_id);
+CREATE INDEX ix_agent_workflows_project_id_created_at ON agent_workflows (project_id, created_at);
+CREATE INDEX ix_agent_workflows_status ON agent_workflows (status);
+
+-- -----------------------------------------------------------------------------
+-- Table: ai_summaries
+-- -----------------------------------------------------------------------------
+CREATE TABLE ai_summaries (
+	project_id UUID NOT NULL, 
+	date_range_start DATE, 
+	date_range_end DATE, 
+	content JSON NOT NULL, 
+	approval_status VARCHAR(20) NOT NULL, 
+	approved_by UUID, 
+	approved_at TIMESTAMP WITH TIME ZONE, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT ck_ai_summary_date_range CHECK (date_range_start IS NULL OR date_range_end IS NULL OR date_range_end >= date_range_start), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE, 
+	FOREIGN KEY(approved_by) REFERENCES users (id) ON DELETE SET NULL
+);
+
+CREATE INDEX ix_ai_summaries_approval_status ON ai_summaries (approval_status);
+CREATE INDEX ix_ai_summaries_project_id ON ai_summaries (project_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: alerts
+-- -----------------------------------------------------------------------------
+CREATE TABLE alerts (
+	project_id UUID NOT NULL, 
+	rule_condition JSON NOT NULL, 
+	priority VARCHAR(10) NOT NULL, 
+	enabled BOOLEAN NOT NULL, 
+	status VARCHAR(20) NOT NULL, 
+	triggered_at TIMESTAMP WITH TIME ZONE, 
+	assigned_to UUID, 
+	resolution_notes TEXT, 
+	resolved_at TIMESTAMP WITH TIME ZONE, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE, 
+	FOREIGN KEY(assigned_to) REFERENCES users (id) ON DELETE SET NULL
+);
+
+CREATE INDEX ix_alerts_status ON alerts (status);
+CREATE INDEX ix_alerts_priority ON alerts (priority);
+CREATE INDEX ix_alerts_assigned_to ON alerts (assigned_to);
+CREATE INDEX ix_alerts_triggered_at ON alerts (triggered_at);
+CREATE INDEX ix_alerts_project_id ON alerts (project_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: aspects
+-- -----------------------------------------------------------------------------
+CREATE TABLE aspects (
+	project_id UUID NOT NULL, 
+	name VARCHAR(150) NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_aspect_project_name UNIQUE (project_id, name), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_aspects_project_id ON aspects (project_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: data_sources
+-- -----------------------------------------------------------------------------
+CREATE TABLE data_sources (
+	project_id UUID NOT NULL, 
+	type VARCHAR(50) NOT NULL, 
+	url TEXT NOT NULL, 
+	keywords JSON NOT NULL, 
+	enabled BOOLEAN NOT NULL, 
+	last_collected_at TIMESTAMP WITH TIME ZONE, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_data_sources_project_id ON data_sources (project_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: datasets
+-- -----------------------------------------------------------------------------
+CREATE TABLE datasets (
+	project_id UUID NOT NULL, 
+	file_type VARCHAR(20) NOT NULL, 
+	file_path TEXT NOT NULL, 
+	original_filename VARCHAR(255), 
+	column_mapping JSON, 
+	status VARCHAR(20) NOT NULL, 
+	uploaded_by UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	row_count INTEGER, 
+	valid_row_count INTEGER, 
+	invalid_row_count INTEGER, 
+	duplicate_row_count INTEGER, 
+	processing_error TEXT, 
+	profile_report JSON, 
+	profile_computed_at TIMESTAMP WITH TIME ZONE, 
+	id UUID NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE, 
+	FOREIGN KEY(uploaded_by) REFERENCES users (id) ON DELETE RESTRICT
+);
+
+CREATE INDEX ix_datasets_project_id ON datasets (project_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: investigations
+-- -----------------------------------------------------------------------------
+CREATE TABLE investigations (
+	organisation_id UUID NOT NULL, 
+	project_id UUID NOT NULL, 
+	requested_by UUID NOT NULL, 
+	question VARCHAR(2000) NOT NULL, 
+	status VARCHAR(30) NOT NULL, 
+	attempt_count INTEGER NOT NULL, 
+	max_attempts INTEGER NOT NULL, 
+	lease_owner VARCHAR(100), 
+	lease_until TIMESTAMP WITH TIME ZONE, 
+	idempotency_key VARCHAR(100), 
+	last_error VARCHAR(500), 
+	error_code VARCHAR(40), 
+	result_summary JSON NOT NULL, 
+	review_state VARCHAR(30) NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	started_at TIMESTAMP WITH TIME ZONE, 
+	completed_at TIMESTAMP WITH TIME ZONE, 
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_investigation_idempotency UNIQUE (project_id, requested_by, idempotency_key), 
+	CONSTRAINT ck_investigation_attempts CHECK (attempt_count >= 0 AND max_attempts BETWEEN 1 AND 5), 
+	CONSTRAINT ck_investigation_status CHECK (status IN ('QUEUED','RUNNING','WAITING','COMPLETED','FAILED','CANCELLED','LIMIT_REACHED','NEEDS_REVIEW')), 
+	CONSTRAINT ck_investigation_review_state CHECK (review_state IN ('UNREVIEWED','NEEDS_REVIEW','REVIEWED')), 
+	FOREIGN KEY(organisation_id) REFERENCES organisations (id) ON DELETE CASCADE, 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE, 
+	FOREIGN KEY(requested_by) REFERENCES users (id) ON DELETE RESTRICT
+);
+
+CREATE INDEX ix_investigations_organisation_id ON investigations (organisation_id);
+CREATE INDEX ix_investigations_project_created ON investigations (project_id, created_at);
+CREATE INDEX ix_investigations_claim ON investigations (status, lease_until, created_at);
+CREATE INDEX ix_investigations_status ON investigations (status);
+CREATE INDEX ix_investigations_project_id ON investigations (project_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: member_roles
+-- -----------------------------------------------------------------------------
+CREATE TABLE member_roles (
+	organisation_member_id UUID NOT NULL, 
+	role_id UUID NOT NULL, 
+	assigned_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	PRIMARY KEY (organisation_member_id, role_id), 
+	FOREIGN KEY(organisation_member_id) REFERENCES organisation_members (id) ON DELETE CASCADE, 
+	FOREIGN KEY(role_id) REFERENCES roles (id) ON DELETE CASCADE
+);
+
+-- -----------------------------------------------------------------------------
+-- Table: project_aspect_vocabulary
+-- -----------------------------------------------------------------------------
+CREATE TABLE project_aspect_vocabulary (
+	project_id UUID NOT NULL, 
+	canonical_name VARCHAR(150) NOT NULL, 
+	surface_forms JSON NOT NULL, 
+	is_active BOOLEAN NOT NULL, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_project_aspect_vocab_canonical UNIQUE (project_id, canonical_name), 
+	CONSTRAINT ck_project_aspect_vocab_name CHECK (length(canonical_name) > 0), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_project_aspect_vocabulary_project_id ON project_aspect_vocabulary (project_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: project_entities
+-- -----------------------------------------------------------------------------
+CREATE TABLE project_entities (
+	project_id UUID NOT NULL, 
+	brand VARCHAR(120), 
+	product VARCHAR(200), 
+	model VARCHAR(120), 
+	sku VARCHAR(120), 
+	canonical_url VARCHAR(2048), 
+	aliases JSON NOT NULL, 
+	identifiers JSON NOT NULL, 
+	include_keywords JSON NOT NULL, 
+	exclude_keywords JSON NOT NULL, 
+	security_keywords JSON NOT NULL, 
+	competitor_keywords JSON NOT NULL, 
+	custom_keywords JSON NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	PRIMARY KEY (project_id), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE
+);
+
+-- -----------------------------------------------------------------------------
+-- Table: project_members
+-- -----------------------------------------------------------------------------
+CREATE TABLE project_members (
+	project_id UUID NOT NULL, 
+	user_id UUID NOT NULL, 
+	added_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	PRIMARY KEY (project_id, user_id), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE, 
+	FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
+-- -----------------------------------------------------------------------------
+-- Table: project_website_context
+-- -----------------------------------------------------------------------------
+CREATE TABLE project_website_context (
+	project_id UUID NOT NULL, 
+	website_url VARCHAR(2048), 
+	source_url VARCHAR(2048), 
+	status VARCHAR(32) NOT NULL, 
+	title VARCHAR(512), 
+	meta_description VARCHAR(2048), 
+	headings JSON NOT NULL, 
+	body_excerpt TEXT, 
+	content_hash VARCHAR(64), 
+	failure_reason VARCHAR(500), 
+	extracted_at TIMESTAMP WITH TIME ZONE, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX ix_project_website_context_project_id ON project_website_context (project_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: reports
+-- -----------------------------------------------------------------------------
+CREATE TABLE reports (
+	project_id UUID NOT NULL, 
+	date_range_start DATE, 
+	date_range_end DATE, 
+	sections JSON NOT NULL, 
+	generation_parameters JSON NOT NULL, 
+	mode VARCHAR(16) NOT NULL, 
+	file_format VARCHAR(10) NOT NULL, 
+	file_path TEXT, 
+	generation_status VARCHAR(20) NOT NULL, 
+	generated_by UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT ck_report_date_range CHECK (date_range_start IS NULL OR date_range_end IS NULL OR date_range_end >= date_range_start), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE, 
+	FOREIGN KEY(generated_by) REFERENCES users (id) ON DELETE RESTRICT
+);
+
+CREATE INDEX ix_reports_generation_status ON reports (generation_status);
+CREATE INDEX ix_reports_project_id ON reports (project_id);
+CREATE INDEX ix_reports_created_at ON reports (created_at);
+
+-- -----------------------------------------------------------------------------
+-- Table: role_permissions
+-- -----------------------------------------------------------------------------
+CREATE TABLE role_permissions (
+	role_id UUID NOT NULL, 
+	permission_id UUID NOT NULL, 
+	PRIMARY KEY (role_id, permission_id), 
+	FOREIGN KEY(role_id) REFERENCES roles (id) ON DELETE CASCADE, 
+	FOREIGN KEY(permission_id) REFERENCES permissions (id) ON DELETE CASCADE
+);
+
+-- -----------------------------------------------------------------------------
+-- Table: topics
+-- -----------------------------------------------------------------------------
+CREATE TABLE topics (
+	project_id UUID NOT NULL, 
+	name VARCHAR(150) NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_topic_project_name UNIQUE (project_id, name), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_topics_project_id ON topics (project_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: investigation_events
+-- -----------------------------------------------------------------------------
+CREATE TABLE investigation_events (
+	investigation_id UUID NOT NULL, 
+	tool_name VARCHAR(80) NOT NULL, 
+	status VARCHAR(30) NOT NULL, 
+	activity_summary VARCHAR(500) NOT NULL, 
+	evidence_ids JSON NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(investigation_id) REFERENCES investigations (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_investigation_events_parent ON investigation_events (investigation_id, created_at);
+CREATE INDEX ix_investigation_events_investigation_id ON investigation_events (investigation_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: investigation_findings
+-- -----------------------------------------------------------------------------
+CREATE TABLE investigation_findings (
+	investigation_id UUID NOT NULL, 
+	finding_type VARCHAR(50) NOT NULL, 
+	claim_status VARCHAR(30) NOT NULL, 
+	claim VARCHAR(2000) NOT NULL, 
+	evidence_ids JSON NOT NULL, 
+	confidence FLOAT, 
+	recommended_action VARCHAR(2000), 
+	review_state VARCHAR(30) NOT NULL, 
+	reviewed_by UUID, 
+	reviewed_at TIMESTAMP WITH TIME ZONE, 
+	review_notes VARCHAR(1000), 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT ck_investigation_finding_confidence CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)), 
+	CONSTRAINT ck_investigation_finding_claim_status CHECK (claim_status IN ('FACT','OBSERVATION','CORRELATION','MODEL_INTERPRETATION','HYPOTHESIS','RECOMMENDATION')), 
+	CONSTRAINT ck_investigation_finding_review_state CHECK (review_state IN ('UNREVIEWED','NEEDS_REVIEW','ACCEPTED','REJECTED')), 
+	FOREIGN KEY(investigation_id) REFERENCES investigations (id) ON DELETE CASCADE, 
+	FOREIGN KEY(reviewed_by) REFERENCES users (id) ON DELETE SET NULL
+);
+
+CREATE INDEX ix_investigation_findings_parent ON investigation_findings (investigation_id, created_at);
+CREATE INDEX ix_investigation_findings_investigation_id ON investigation_findings (investigation_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: recommendations
+-- -----------------------------------------------------------------------------
+CREATE TABLE recommendations (
+	project_id UUID NOT NULL, 
+	aspect_id UUID, 
+	text TEXT NOT NULL, 
+	priority VARCHAR(10) NOT NULL, 
+	supporting_review_count INTEGER NOT NULL, 
+	status VARCHAR(20) NOT NULL, 
+	assigned_to UUID, 
+	completed_at TIMESTAMP WITH TIME ZONE, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE, 
+	FOREIGN KEY(aspect_id) REFERENCES aspects (id) ON DELETE SET NULL, 
+	FOREIGN KEY(assigned_to) REFERENCES users (id) ON DELETE SET NULL
+);
+
+CREATE INDEX ix_recommendations_status ON recommendations (status);
+CREATE INDEX ix_recommendations_project_id ON recommendations (project_id);
+CREATE INDEX ix_recommendations_assigned_to ON recommendations (assigned_to);
+CREATE INDEX ix_recommendations_aspect_id ON recommendations (aspect_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: reviews
+-- -----------------------------------------------------------------------------
+CREATE TABLE reviews (
+	project_id UUID NOT NULL, 
+	data_source_id UUID, 
+	dataset_id UUID, 
+	text TEXT NOT NULL, 
+	reviewer_ref VARCHAR(150), 
+	source VARCHAR(100), 
+	rating NUMERIC(3, 1), 
+	review_date DATE, 
+	is_spam BOOLEAN NOT NULL, 
+	is_duplicate BOOLEAN NOT NULL, 
+	keyword_matches JSON NOT NULL, 
+	source_record_id VARCHAR(255), 
+	source_url VARCHAR(2048), 
+	source_metadata JSON NOT NULL, 
+	source_collected_at TIMESTAMP WITH TIME ZONE, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	id UUID NOT NULL, 
+	deleted_at TIMESTAMP WITH TIME ZONE, 
+	PRIMARY KEY (id), 
+	CONSTRAINT ck_review_single_origin CHECK ((data_source_id IS NOT NULL) != (dataset_id IS NOT NULL)), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE, 
+	FOREIGN KEY(data_source_id) REFERENCES data_sources (id) ON DELETE SET NULL, 
+	FOREIGN KEY(dataset_id) REFERENCES datasets (id) ON DELETE SET NULL
+);
+
+CREATE INDEX ix_reviews_data_source_record_id ON reviews (data_source_id, source_record_id);
+CREATE INDEX ix_reviews_project_id ON reviews (project_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: aspect_sentiments
+-- -----------------------------------------------------------------------------
+CREATE TABLE aspect_sentiments (
+	id UUID NOT NULL, 
+	review_id UUID NOT NULL, 
+	aspect_id UUID NOT NULL, 
+	sentiment_label VARCHAR(10) NOT NULL, 
+	confidence_score NUMERIC(5, 4) NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_aspect_sentiment_review_aspect UNIQUE (review_id, aspect_id), 
+	CONSTRAINT ck_aspect_sentiment_confidence_range CHECK (confidence_score BETWEEN 0 AND 1), 
+	FOREIGN KEY(review_id) REFERENCES reviews (id) ON DELETE CASCADE, 
+	FOREIGN KEY(aspect_id) REFERENCES aspects (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_aspect_sentiments_review_id ON aspect_sentiments (review_id);
+CREATE INDEX ix_aspect_sentiments_aspect_id ON aspect_sentiments (aspect_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: review_duplicate_links
+-- -----------------------------------------------------------------------------
+CREATE TABLE review_duplicate_links (
+	project_id UUID NOT NULL, 
+	review_id UUID NOT NULL, 
+	duplicate_review_id UUID NOT NULL, 
+	relationship_type VARCHAR(30) NOT NULL, 
+	strength FLOAT, 
+	method VARCHAR(60) NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_review_duplicate_pair UNIQUE (review_id, duplicate_review_id), 
+	CONSTRAINT ck_review_duplicate_not_self CHECK (review_id != duplicate_review_id), 
+	CONSTRAINT ck_review_duplicate_strength CHECK (strength IS NULL OR (strength >= 0 AND strength <= 1)), 
+	CONSTRAINT ck_review_duplicate_type CHECK (relationship_type IN ('EXACT_DUPLICATE','NEAR_DUPLICATE','POSSIBLE_DUPLICATE')), 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE, 
+	FOREIGN KEY(review_id) REFERENCES reviews (id) ON DELETE CASCADE, 
+	FOREIGN KEY(duplicate_review_id) REFERENCES reviews (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_review_duplicate_project ON review_duplicate_links (project_id, created_at);
+CREATE INDEX ix_review_duplicate_links_project_id ON review_duplicate_links (project_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: review_topics
+-- -----------------------------------------------------------------------------
+CREATE TABLE review_topics (
+	review_id UUID NOT NULL, 
+	topic_id UUID NOT NULL, 
+	relevance_score NUMERIC(5, 4), 
+	PRIMARY KEY (review_id, topic_id), 
+	CONSTRAINT ck_review_topic_relevance_range CHECK (relevance_score IS NULL OR relevance_score BETWEEN 0 AND 1), 
+	FOREIGN KEY(review_id) REFERENCES reviews (id) ON DELETE CASCADE, 
+	FOREIGN KEY(topic_id) REFERENCES topics (id) ON DELETE CASCADE
+);
+
+-- -----------------------------------------------------------------------------
+-- Table: security_findings
+-- -----------------------------------------------------------------------------
+CREATE TABLE security_findings (
+	organisation_id UUID NOT NULL, 
+	project_id UUID NOT NULL, 
+	review_id UUID NOT NULL, 
+	finding_type VARCHAR(80) NOT NULL, 
+	severity VARCHAR(20) NOT NULL, 
+	confidence FLOAT, 
+	evidence JSON NOT NULL, 
+	indicators JSON NOT NULL, 
+	classification_method VARCHAR(80) NOT NULL, 
+	review_text_sha256 VARCHAR(64), 
+	status VARCHAR(30) NOT NULL, 
+	analyst_notes VARCHAR(2000), 
+	reviewed_by UUID, 
+	reviewed_at TIMESTAMP WITH TIME ZONE, 
+	id UUID NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_security_finding_review_type UNIQUE (review_id, finding_type), 
+	CONSTRAINT ck_security_finding_confidence CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)), 
+	FOREIGN KEY(organisation_id) REFERENCES organisations (id) ON DELETE CASCADE, 
+	FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE, 
+	FOREIGN KEY(review_id) REFERENCES reviews (id) ON DELETE CASCADE, 
+	FOREIGN KEY(reviewed_by) REFERENCES users (id) ON DELETE SET NULL
+);
+
+CREATE INDEX ix_security_findings_review_id ON security_findings (review_id);
+CREATE INDEX ix_security_findings_project_id ON security_findings (project_id);
+CREATE INDEX ix_security_findings_organisation_id ON security_findings (organisation_id);
+
+-- -----------------------------------------------------------------------------
+-- Table: sentiment_results
+-- -----------------------------------------------------------------------------
+CREATE TABLE sentiment_results (
+	review_id UUID NOT NULL, 
+	sentiment_label VARCHAR(10) NOT NULL, 
+	positive_score NUMERIC(5, 4) NOT NULL, 
+	negative_score NUMERIC(5, 4) NOT NULL, 
+	neutral_score NUMERIC(5, 4) NOT NULL, 
+	confidence_score NUMERIC(5, 4) NOT NULL, 
+	model_name VARCHAR(100) NOT NULL, 
+	model_version VARCHAR(50) NOT NULL, 
+	analysed_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	corrected_by_user_id UUID, 
+	corrected_at TIMESTAMP WITH TIME ZONE, 
+	compound_score NUMERIC(6, 4), 
+	vader_breakdown JSON, 
+	id UUID NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_sentiment_result_review UNIQUE (review_id), 
+	CONSTRAINT ck_sentiment_positive_range CHECK (positive_score BETWEEN 0 AND 1), 
+	CONSTRAINT ck_sentiment_negative_range CHECK (negative_score BETWEEN 0 AND 1), 
+	CONSTRAINT ck_sentiment_neutral_range CHECK (neutral_score BETWEEN 0 AND 1), 
+	CONSTRAINT ck_sentiment_confidence_range CHECK (confidence_score BETWEEN 0 AND 1), 
+	FOREIGN KEY(review_id) REFERENCES reviews (id) ON DELETE CASCADE, 
+	FOREIGN KEY(corrected_by_user_id) REFERENCES users (id) ON DELETE SET NULL
+);
+
+-- =============================================================================
+-- SEED DATA: Default Permissions and Roles
+-- =============================================================================
+
+-- Plain-SQL equivalent of `flask seed` (see database/README.md).
+-- Requires the pgcrypto extension for gen_random_uuid().
+-- Safe to re-run: every insert is guarded with ON CONFLICT DO NOTHING.
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- Fixed permission catalogue
+INSERT INTO permissions (id, code, description) VALUES
+  (gen_random_uuid(), 'create_project', 'Create a project'),
+  (gen_random_uuid(), 'edit_project', 'Edit, archive, or delete a project'),
+  (gen_random_uuid(), 'delete_project', 'Delete a project'),
+  (gen_random_uuid(), 'upload_dataset', 'Upload a dataset'),
+  (gen_random_uuid(), 'manage_data_sources', 'Add, edit, enable, or disable data sources'),
+  (gen_random_uuid(), 'view_reviews', 'View reviews and analysis results'),
+  (gen_random_uuid(), 'correct_sentiment', 'Correct a review''s sentiment label'),
+  (gen_random_uuid(), 'generate_report', 'Generate, download, or delete reports'),
+  (gen_random_uuid(), 'manage_alerts', 'Create, edit, or resolve alert rules'),
+  (gen_random_uuid(), 'manage_users', 'Invite, edit, activate/deactivate, or remove users'),
+  (gen_random_uuid(), 'manage_roles', 'Create, edit, or delete roles and assign permissions'),
+  (gen_random_uuid(), 'approve_ai_output', 'Approve AI-generated summaries and recommendations')
+ON CONFLICT (code) DO NOTHING;
+
+-- Built-in roles (organisation_id = NULL)
+INSERT INTO roles (id, organisation_id, name, is_custom, created_at, updated_at) VALUES
+  (gen_random_uuid(), NULL, 'Organisation Owner', false, now(), now()),
+  (gen_random_uuid(), NULL, 'Organisation Administrator', false, now(), now()),
+  (gen_random_uuid(), NULL, 'Project Manager', false, now(), now()),
+  (gen_random_uuid(), NULL, 'Analyst', false, now(), now()),
+  (gen_random_uuid(), NULL, 'Data Collector', false, now(), now()),
+  (gen_random_uuid(), NULL, 'Viewer', false, now(), now())
+ON CONFLICT (organisation_id, name) DO NOTHING;
+
+-- Owner and Administrator: every permission
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+WHERE r.organisation_id IS NULL AND r.name IN ('Organisation Owner', 'Organisation Administrator')
+ON CONFLICT DO NOTHING;
+
+-- Project Manager
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r JOIN permissions p ON p.code IN (
+  'create_project', 'edit_project', 'upload_dataset', 'manage_data_sources',
+  'view_reviews', 'correct_sentiment', 'generate_report', 'manage_alerts', 'approve_ai_output'
+)
+WHERE r.organisation_id IS NULL AND r.name = 'Project Manager'
+ON CONFLICT DO NOTHING;
+
+-- Analyst
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r JOIN permissions p ON p.code IN (
+  'upload_dataset', 'view_reviews', 'correct_sentiment', 'generate_report', 'manage_alerts'
+)
+WHERE r.organisation_id IS NULL AND r.name = 'Analyst'
+ON CONFLICT DO NOTHING;
+
+-- Data Collector
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r JOIN permissions p ON p.code IN (
+  'upload_dataset', 'manage_data_sources', 'view_reviews'
+)
+WHERE r.organisation_id IS NULL AND r.name = 'Data Collector'
+ON CONFLICT DO NOTHING;
+
+-- Viewer
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id FROM roles r JOIN permissions p ON p.code = 'view_reviews'
+WHERE r.organisation_id IS NULL AND r.name = 'Viewer'
+ON CONFLICT DO NOTHING;

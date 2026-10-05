@@ -12,7 +12,8 @@ data/
 logs/
 *.db
 tests/
-fixtures/
+fixtures/*
+!fixtures/sentiment_benchmark.csv
 **/*.log
 scripts/
 .git

@@ -81,3 +81,11 @@ def test_evaluation_unsupported_labels_handled_safely():
     # We verify the loader's guard by importing and checking the constant set.
     from app.services.evaluation_service import _SUPPORTED_LABELS
     assert _SUPPORTED_LABELS == {"positive", "negative", "neutral"}
+
+
+def test_backend_image_keeps_the_benchmark_fixture_in_its_build_context():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    ignore_rules = (backend / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    assert "!fixtures/sentiment_benchmark.csv" in ignore_rules

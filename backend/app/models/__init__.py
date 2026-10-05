@@ -23,6 +23,10 @@ from app.models.report import Report, FILE_FORMATS as REPORT_FILE_FORMATS, GENER
 from app.models.agent_workflow import AgentWorkflow, WORKFLOW_TYPES, WORKFLOW_STATUSES
 from app.models.project_aspect_vocabulary import ProjectAspectVocabulary
 from app.models.project_website_context import ProjectWebsiteContext
+from app.models.project_entity import ProjectEntity
+from app.models.security_finding import SecurityFinding
+from app.models.review_duplicate_link import ReviewDuplicateLink
+from app.models.investigation import Investigation, InvestigationEvent, InvestigationFinding, INVESTIGATION_STATUSES
 
 __all__ = [
     "Organisation",
@@ -67,4 +71,8 @@ __all__ = [
     "WORKFLOW_STATUSES",
     "ProjectAspectVocabulary",
     "ProjectWebsiteContext",
+    "ProjectEntity",
+    "SecurityFinding",
+    "ReviewDuplicateLink",
+    "Investigation", "InvestigationEvent", "InvestigationFinding", "INVESTIGATION_STATUSES",
 ]

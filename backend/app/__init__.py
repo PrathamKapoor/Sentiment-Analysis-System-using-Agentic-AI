@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timezone
 
 from flask import Flask
+import click
 
 from app.config import config_by_name
 from app.extensions import db, migrate, jwt, cors
@@ -112,6 +113,23 @@ def create_app(config_name=None):
         from app.services.seed_service import seed_permissions_and_roles
         seed_permissions_and_roles()
         print("Seeded permissions and built-in roles.")
+
+    @app.cli.command("investigations-worker")
+    @click.option("--once", "run_once", is_flag=True, help="Claim and process at most one investigation.")
+    def investigations_worker_command(run_once):
+        """Run the PostgreSQL-backed persisted investigation worker."""
+        import os
+        import time
+        from app.services.investigation_service import run_one_investigation
+        worker_id = f"worker-{os.getpid()}"
+        poll_seconds = max(0.2, min(float(os.environ.get("INVESTIGATION_WORKER_POLL_SECONDS", "1")), 30.0))
+        while True:
+            result = run_one_investigation(worker_id)
+            if run_once:
+                click.echo(result.status if result else "IDLE")
+                break
+            if result is None:
+                time.sleep(poll_seconds)
 
     return app
 

@@ -26,4 +26,5 @@ PERMISSION_CATALOGUE = [
     ("manage_users", "Invite, edit, activate/deactivate, or remove users"),
     ("manage_roles", "Create, edit, or delete roles and assign permissions"),
     ("approve_ai_output", "Approve AI-generated summaries and recommendations"),
+    ("review_security_findings", "Run and triage project security signals"),
 ]

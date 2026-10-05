@@ -35,6 +35,33 @@ def test_generate_summary_uses_correct_stored_analytics(client):
     assert f"{summary_data['positive']['percentage']}%" in body["sections"]["sentiment"]
 
 
+def test_generate_summary_without_date_range_uses_all_reviews(client):
+    _org_id, headers = owner_context(client)
+    project_id = create_project(client, headers)
+    create_reviews_directly(project_id, ["Works well", "Poor quality"])
+    response = client.post(
+        f"/api/v1/projects/{project_id}/ai-summaries",
+        json={"summaryType": "overall"},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.get_json()
+    assert response.get_json()["data"]["dateRangeStart"] is None
+    assert response.get_json()["data"]["dateRangeEnd"] is None
+
+
+def test_generate_summary_accepts_one_sided_date_range(client):
+    _org_id, headers = owner_context(client)
+    project_id = create_project(client, headers)
+    create_reviews_directly(project_id, ["Works well"])
+    response = client.post(
+        f"/api/v1/projects/{project_id}/ai-summaries",
+        json={"dateFrom": "2026-01-01"}, headers=headers,
+    )
+    assert response.status_code == 201, response.get_json()
+    assert response.get_json()["data"]["dateRangeStart"] == "2026-01-01"
+    assert response.get_json()["data"]["dateRangeEnd"] is None
+
+
 def test_summary_missing_analytics_handled(client):
     org_id, headers = owner_context(client)
     project_id = create_project(client, headers)

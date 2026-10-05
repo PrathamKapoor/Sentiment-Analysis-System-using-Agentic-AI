@@ -41,6 +41,7 @@ from app.services.llm.provider import (
     StubProvider,
     is_configured,
     get_provider,
+    configured_provider_chain,
     reset_provider_cache,
 )
 
@@ -52,5 +53,6 @@ __all__ = [
     "StubProvider",
     "is_configured",
     "get_provider",
+    "configured_provider_chain",
     "reset_provider_cache",
 ]

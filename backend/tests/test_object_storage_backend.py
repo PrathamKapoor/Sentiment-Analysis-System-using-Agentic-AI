@@ -68,9 +68,9 @@ def fake_boto3_module(monkeypatch):
 def test_s3_backend_missing_boto3_raises(monkeypatch):
     """Without boto3 installed, save_bytes must fail with a clear
     error rather than silently falling back to local disk."""
-    # Remove any cached boto3 module so the import inside save_bytes
-    # actually fails.
-    monkeypatch.delitem(sys.modules, "boto3", raising=False)
+    # Mask the dependency so the test behaves the same even when boto3 is
+    # installed in the developer environment.
+    monkeypatch.setitem(sys.modules, "boto3", None)
 
     b = S3StorageBackend(bucket="b", region="us-east-1")
     with pytest.raises(RuntimeError, match="boto3"):

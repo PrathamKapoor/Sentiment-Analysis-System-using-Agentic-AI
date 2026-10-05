@@ -12,6 +12,17 @@ The expected production operating system is **Linux** (Debian-family).
 A **Windows** host is supported only for development and the smoke
 test below; the canonical production image runs on Linux.
 
+### Local demo runtime verification (2026-10-04)
+
+An isolated Docker Compose demo was run on Windows against a fresh PostgreSQL
+18 container. Its migration job reached `0016`; database, Redis, API, frontend,
+and investigation-worker containers started; authenticated data import,
+analysis, worker investigation completion, and PDF/Excel report downloads were
+exercised. This verifies that local Compose path only. It is **not** a
+production deployment certification: no production host, domain, TLS, external
+storage, live LLM provider, or Vercel deployment was exercised. The local demo
+startup procedure is in the repository root `README.md`.
+
 ---
 
 ## 1. Architecture
@@ -31,6 +42,9 @@ nginx reverse proxy (frontend container)
                           │
                           ▼
                        PostgreSQL
+                          ▲
+                          │
+       investigations-worker (one process; leased jobs)
 ```
 
 Components:
@@ -50,7 +64,10 @@ Components:
   the same app runs under `waitress` (entrypoint
   `python -m app.runner`).
 - **PostgreSQL container** — `postgres:18-alpine` with a named
-  volume (`db_data`) for persistent storage. Migrations are applied
+  volume (`db_data`) mounted at `/var/lib/postgresql`, as required by
+  PostgreSQL 18's versioned `PGDATA` layout. Do not change this to a
+  nested `/var/lib/postgresql/data` volume: the upstream 18 entrypoint
+  rejects that legacy mount. Migrations are applied
   by a dedicated one-shot `migrate` service; backend replicas wait for
   it to exit successfully before starting.
 - **Redis container** — `redis:7-alpine` with AOF persistence
@@ -61,11 +78,18 @@ Components:
   are treated as revoked, so the backend waits for Redis health
   before starting.
 
-Celery is deliberately **not** introduced. All current
-report / LLM / collection / analysis operations are short enough to
-be served inline within the gunicorn worker. The application was
-designed for synchronous execution; an asynchronous job system is
-deferred until a measured need exists.
+Collection and the existing `agent_workflows` retain their current synchronous
+behavior. Persisted evidence investigations run in a dedicated worker because
+they can combine several bounded read tools with optional LLM calls. The worker
+uses PostgreSQL-backed conditional claims and leases; the Compose deployment
+starts one worker process by default. It processes already-ingested evidence and
+does not collect from external sources. No Celery/Redis queue is used for job
+state. Retry attempts are bounded in the database. The Docker worker shares the
+backend image, database, LLM configuration and report volume, and waits until
+migrations complete. Set `INVESTIGATION_WORKER_POLL_SECONDS` to a value from
+0.2 to 30 seconds (default 1). Start additional worker replicas only after
+monitoring database contention and job volume; atomic claims prevent the same
+active row being claimed twice.
 
 Redis is **not an application dependency** — the app runs correctly
 with zero Redis. It is only the recommended *shared state backend*
@@ -149,10 +173,15 @@ production behavior, security impact — is
 | `DB_POOL_RECYCLE_SECONDS`   | `1800`        | Recycle interval to avoid stale conns     |
 | `LLM_PROVIDER`              | `deterministic` | `openai_compatible` to enable real LLM  |
 | `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | unset | Required only when `LLM_PROVIDER=openai_compatible` |
-| `LLM_TIMEOUT_SECONDS`       | `20`          | Per-request timeout                      |
+| `LLM_MAIN_*` / `LLM_FALLBACK_*` | unset | Independent optional structured product-discovery providers; each role requires its own key, base URL, and model |
+| `SCRAPING_RAPIDAPI_*` | disabled/unset | Optional Level 2 adapter; explicitly enable it and configure host/base URL/endpoint from the provider account. The key is server-side only. |
+| `COLLECTION_*` / `PRODUCT_DISCOVERY_*` | see `backend/.env.example` | Three-level ordering, result/timeout caps, identity requirement, and feature switches |
+| `LLM_TIMEOUT_SECONDS`       | `20`          | Per-request timeout, clamped to 1–20 seconds |
 | `LLM_MAX_TOKENS`            | `512`         | Per-request cap                          |
+| `GITHUB_TOKEN`              | unset         | Optional server-side token for public GitHub Issues API rate-limit headroom; not required for collection |
 | `SCRAPER_*`                 | see `.env.example` | Network collection tuning           |
 | `SENTIMENT_ENGINE`          | `vader`       | Pluggable sentiment engine              |
+| `INVESTIGATION_WORKER_POLL_SECONDS` | `1` | Worker idle poll; clamped to 0.2–30 seconds |
 
 ### Frontend
 
@@ -217,8 +246,9 @@ docker compose exec backend flask db downgrade -1
 ```
 
 Migrations live under `backend/migrations/versions/`. Do not delete
-or renumber accepted migrations. The PostgreSQL chain is
-`0001 → 0009`; SQLite shares the same chain.
+or renumber accepted migrations. The current working-tree PostgreSQL chain is
+`0001 → 0016`; SQLite shares the same chain. Migrations `0015` and `0016` are
+local, unreleased changes until applied through an approved deployment process.
 
 Migration rollout rules:
 
@@ -472,6 +502,13 @@ curl -fsS -X OPTIONS \
   -H 'Access-Control-Request-Method: POST' \
   http://127.0.0.1:8080/api/v1/auth/login -i
 ```
+
+The bundled Compose stack also runs `investigations-worker`. Confirm its
+container remains running and inspect `docker compose logs investigations-worker`
+for worker startup failures. To process at most one queued job interactively,
+run `docker compose exec backend flask --app run investigations-worker --once`;
+do not run this diagnostic command at the same time as production job processing
+unless you are intentionally testing competing claims.
 
 The script `backend/scripts/smoke_concurrency.py` runs a burst
 of 200 health requests at concurrency 10 against the local backend

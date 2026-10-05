@@ -59,6 +59,9 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, db.Model):
     website_context = db.relationship(
         "ProjectWebsiteContext", uselist=False, cascade="all, delete-orphan", back_populates="project",
     )
+    entity = db.relationship(
+        "ProjectEntity", uselist=False, cascade="all, delete-orphan", back_populates="project",
+    )
 
     def to_dict(self):
         return {
